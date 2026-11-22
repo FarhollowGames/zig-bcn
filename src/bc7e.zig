@@ -314,6 +314,79 @@ fn vec4FNormalizeInPlace(v: *Vec4F) void {
     }
 }
 
+// Per-pixel loops run on vectors of a block's 16 pixels, one pixel to a lane.
+// Each lane does the original's float steps in the original's order, so every
+// lane holds the value the scalar loop computes for that pixel. Sums across
+// pixels stay scalar and in pixel order (`sumLanes`), since float addition
+// does not reassociate.
+const lanes = 16;
+const V = @Vector(lanes, f32);
+const VI = @Vector(lanes, i32);
+const VB = @Vector(lanes, bool);
+
+const lane_index: VI = std.simd.iota(i32, lanes);
+
+fn splatF(x: f32) V {
+    return @splat(x);
+}
+
+/// minF, maxF and clampF on lanes, with the same NaN behaviour.
+fn minV(a: V, b: V) V {
+    return @select(f32, a < b, a, b);
+}
+
+fn maxV(a: V, b: V) V {
+    return @select(f32, a > b, a, b);
+}
+
+fn clampV(v: V, lo: f32, hi: f32) V {
+    return minV(maxV(v, splatF(lo)), splatF(hi));
+}
+
+/// Lanes below `n`.
+fn activeLanes(n: u32) VB {
+    return lane_index < @as(VI, @splat(@intCast(n)));
+}
+
+/// The scalar sum `total += v[i]` for i below `n`, in pixel order. The lanes
+/// at and past `n` are replaced by +0, which leaves any non-negative sum as
+/// it is, so the loop runs unrolled over all 16.
+fn sumLanes(v: V, n: u32) f32 {
+    const masked = @select(f32, activeLanes(n), v, splatF(0));
+    var total: f32 = 0;
+    inline for (0..lanes) |i| total += masked[i];
+    return total;
+}
+
+/// A subset's pixels as lanes: channels as floats, and the luma and chroma
+/// of the perceptual metric. Lanes at and past `n` hold pixel 0's values,
+/// so they stay finite; callers ignore them.
+const PixelLanes = struct {
+    r: V,
+    g: V,
+    b: V,
+    a: V,
+    y: V,
+    cr: V,
+    cb: V,
+    n: u32,
+
+    fn init(pixels: []const ColorQuadI, n: u32) PixelLanes {
+        assert(n >= 1 and n <= lanes and pixels.len >= n);
+        var c: [4][lanes]i32 = undefined;
+        for (0..lanes) |i| {
+            const px = pixels[if (i < n) i else 0];
+            inline for (0..4) |k| c[k][i] = px[k];
+        }
+        const r: V = @floatFromInt(@as(VI, c[0]));
+        const g: V = @floatFromInt(@as(VI, c[1]));
+        const b: V = @floatFromInt(@as(VI, c[2]));
+        const a: V = @floatFromInt(@as(VI, c[3]));
+        const y = r * splatF(0.2126) + g * splatF(0.7152) + b * splatF(0.0722);
+        return .{ .r = r, .g = g, .b = b, .a = a, .y = y, .cr = r - y, .cb = b - y, .n = n };
+    }
+};
+
 pub const weights2 = [4]u32{ 0, 21, 43, 64 };
 pub const weights3 = [8]u32{ 0, 9, 18, 27, 37, 46, 55, 64 };
 pub const weights4 = [16]u32{ 0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64 };
@@ -1119,14 +1192,29 @@ fn err4(wr: f32, wg: f32, wb: f32, wa: f32, dr: f32, dg: f32, db: f32, da: f32) 
     return wr * dr * dr + wg * dg * dg + wb * db * db + wa * da * da;
 }
 
+/// err3 on lanes; err4 is err3V plus errTermV of alpha.
+fn err3V(wr: V, wg: V, wb: V, dr: V, dg: V, db: V) V {
+    return wr * dr * dr + wg * dg * dg + wb * db * db;
+}
+
+fn errTermV(w: V, d: V) V {
+    return w * d * d;
+}
+
+/// `table[idx[i]]` in every lane.
+fn gatherLanes(table: *const [lanes]f32, idx: VI) V {
+    var out: [lanes]f32 = undefined;
+    inline for (0..lanes) |i| out[i] = table[@intCast(idx[i])];
+    return out;
+}
+
 fn evaluateSolution(
     low: *const ColorQuadI,
     high: *const ColorQuadI,
     pbits: *const [2]u32,
     params: *const ColorCellCompressorParams,
     results: *ColorCellCompressorResults,
-    num_pixels: u32,
-    pixels: []const ColorQuadI,
+    px: *const PixelLanes,
 ) u64 {
     var quant_min_color = low.*;
     var quant_max_color = high.*;
@@ -1154,11 +1242,9 @@ fn evaluateSolution(
     assert(n == 4 or n == 8 or n == 16);
     const nc: u32 = if (params.has_alpha) 4 else 3;
 
-    var total_errf: f32 = 0;
-
     const wr = f32FromInt(params.weights[0]);
-    var wg = f32FromInt(params.weights[1]);
-    var wb = f32FromInt(params.weights[2]);
+    const wg = f32FromInt(params.weights[1]);
+    const wb = f32FromInt(params.weights[2]);
     const wa = f32FromInt(params.weights[3]);
 
     // Entries 1..n-2 get only nc channels; the alpha of those is read only
@@ -1174,229 +1260,109 @@ fn evaluateSolution(
         }
     }
 
-    const temp = results.selectors_temp;
+    const num_pixels = px.n;
+    var total_errf: f32 = 0;
+    var sel: VI = undefined;
 
     if (!params.perceptual) {
-        if (!params.has_alpha) {
-            if (n == 16) {
-                var lr = f32FromInt(actual_min_color[0]);
-                var lg = f32FromInt(actual_min_color[1]);
-                var lb = f32FromInt(actual_min_color[2]);
+        const vwr = splatF(wr);
+        const vwg = splatF(wg);
+        const vwb = splatF(wb);
+        const vwa = splatF(wa);
+        const has_alpha = params.has_alpha;
 
-                const dr = f32FromInt(actual_max_color[0]) - lr;
-                const dg = f32FromInt(actual_max_color[1]) - lg;
-                const db = f32FromInt(actual_max_color[2]) - lb;
+        if (n == 16) {
+            const lo = vec4FFromColor(actual_min_color);
+            const hi = vec4FFromColor(actual_max_color);
+            const dr = hi[0] - lo[0];
+            const dg = hi[1] - lo[1];
+            const db = hi[2] - lo[2];
+            const da = if (has_alpha) hi[3] - lo[3] else 0;
 
-                const f = f32FromInt(n) / (dr * dr + dg * dg + db * db + denom_bias);
+            const f = if (has_alpha)
+                f32FromInt(n) / (dr * dr + dg * dg + db * db + da * da + denom_bias)
+            else
+                f32FromInt(n) / (dr * dr + dg * dg + db * db + denom_bias);
 
-                lr *= -dr;
-                lg *= -dg;
-                lb *= -db;
+            const lr = lo[0] * -dr;
+            const lg = lo[1] * -dg;
+            const lb = lo[2] * -db;
+            const la = lo[3] * -da;
 
-                for (0..num_pixels) |i| {
-                    const c = pixels[i];
-                    const r = f32FromInt(c[0]);
-                    const g = f32FromInt(c[1]);
-                    const b = f32FromInt(c[2]);
+            var dot = (px.r * splatF(dr) + splatF(lr)) + (px.g * splatF(dg) + splatF(lg)) + (px.b * splatF(db) + splatF(lb));
+            if (has_alpha) dot += px.a * splatF(da) + splatF(la);
+            const best_sel = clampV(@floor(dot * splatF(f) + splatF(0.5)), 1, f32FromInt(n - 1));
+            const best_sel0 = best_sel - splatF(1);
+            // In 1 to 15 after the clamp, NaN included, so the casts are exact.
+            const idx1: VI = @intFromFloat(best_sel);
+            const idx0: VI = @intFromFloat(best_sel0);
 
-                    var best_sel = @floor(((r * dr + lr) + (g * dg + lg) + (b * db + lb)) * f + 0.5);
-                    best_sel = clampF(best_sel, 1, f32FromInt(n - 1));
-
-                    const best_sel0 = best_sel - 1;
-
-                    const w0 = weighted_colors[@intCast(ftoi(best_sel0))];
-                    const err0 = err3(wr, wg, wb, w0[0] - r, w0[1] - g, w0[2] - b);
-
-                    const w1 = weighted_colors[@intCast(ftoi(best_sel))];
-                    const err1 = err3(wr, wg, wb, w1[0] - r, w1[1] - g, w1[2] - b);
-
-                    const min_err = minF(err0, err1);
-                    total_errf += min_err;
-                    temp[i] = ftoi(if (min_err == err0) best_sel0 else best_sel);
-                }
-            } else if (n == 8) {
-                for (0..num_pixels) |i| {
-                    const pr = f32FromInt(pixels[i][0]);
-                    const pg = f32FromInt(pixels[i][1]);
-                    const pb = f32FromInt(pixels[i][2]);
-
-                    var e: [8]f32 = undefined;
-                    for (0..8) |k| e[k] = err3(wr, wg, wb, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb);
-
-                    var best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
-                    var best_sel: i32 = if (best_err == e[1]) 1 else 0;
-                    if (best_err == e[2]) best_sel = 2;
-                    if (best_err == e[3]) best_sel = 3;
-
-                    best_err = minF(best_err, minF(minF(minF(e[4], e[5]), e[6]), e[7]));
-                    if (best_err == e[4]) best_sel = 4;
-                    if (best_err == e[5]) best_sel = 5;
-                    if (best_err == e[6]) best_sel = 6;
-                    if (best_err == e[7]) best_sel = 7;
-
-                    total_errf += best_err;
-                    temp[i] = best_sel;
-                }
-            } else {
-                for (0..num_pixels) |i| {
-                    const pr = f32FromInt(pixels[i][0]);
-                    const pg = f32FromInt(pixels[i][1]);
-                    const pb = f32FromInt(pixels[i][2]);
-
-                    var e: [4]f32 = undefined;
-                    for (0..4) |k| e[k] = err3(wr, wg, wb, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb);
-
-                    const best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
-                    var best_sel: i32 = if (best_err == e[1]) 1 else 0;
-                    if (best_err == e[2]) best_sel = 2;
-                    if (best_err == e[3]) best_sel = 3;
-
-                    total_errf += best_err;
-                    temp[i] = best_sel;
-                }
+            var table: [4][lanes]f32 = undefined;
+            inline for (0..4) |c| {
+                inline for (0..16) |k| table[c][k] = weighted_colors[k][c];
             }
+
+            var e0 = err3V(vwr, vwg, vwb, gatherLanes(&table[0], idx0) - px.r, gatherLanes(&table[1], idx0) - px.g, gatherLanes(&table[2], idx0) - px.b);
+            var e1 = err3V(vwr, vwg, vwb, gatherLanes(&table[0], idx1) - px.r, gatherLanes(&table[1], idx1) - px.g, gatherLanes(&table[2], idx1) - px.b);
+            if (has_alpha) {
+                e0 += errTermV(vwa, gatherLanes(&table[3], idx0) - px.a);
+                e1 += errTermV(vwa, gatherLanes(&table[3], idx1) - px.a);
+            }
+            const min_err = minV(e0, e1);
+            total_errf = sumLanes(min_err, num_pixels);
+            sel = @select(i32, min_err == e0, idx0, idx1);
         } else {
-            // alpha
-            if (n == 16) {
-                var lr = f32FromInt(actual_min_color[0]);
-                var lg = f32FromInt(actual_min_color[1]);
-                var lb = f32FromInt(actual_min_color[2]);
-                var la = f32FromInt(actual_min_color[3]);
-
-                const dr = f32FromInt(actual_max_color[0]) - lr;
-                const dg = f32FromInt(actual_max_color[1]) - lg;
-                const db = f32FromInt(actual_max_color[2]) - lb;
-                const da = f32FromInt(actual_max_color[3]) - la;
-
-                const f = f32FromInt(n) / (dr * dr + dg * dg + db * db + da * da + denom_bias);
-
-                lr *= -dr;
-                lg *= -dg;
-                lb *= -db;
-                la *= -da;
-
-                for (0..num_pixels) |i| {
-                    const c = pixels[i];
-                    const r = f32FromInt(c[0]);
-                    const g = f32FromInt(c[1]);
-                    const b = f32FromInt(c[2]);
-                    const a = f32FromInt(c[3]);
-
-                    var best_sel = @floor(((r * dr + lr) + (g * dg + lg) + (b * db + lb) + (a * da + la)) * f + 0.5);
-                    best_sel = clampF(best_sel, 1, f32FromInt(n - 1));
-
-                    const best_sel0 = best_sel - 1;
-
-                    const w0 = weighted_colors[@intCast(ftoi(best_sel0))];
-                    const err0 = err4(wr, wg, wb, wa, w0[0] - r, w0[1] - g, w0[2] - b, w0[3] - a);
-
-                    const w1 = weighted_colors[@intCast(ftoi(best_sel))];
-                    const err1 = err4(wr, wg, wb, wa, w1[0] - r, w1[1] - g, w1[2] - b, w1[3] - a);
-
-                    const min_err = minF(err0, err1);
-                    total_errf += min_err;
-                    temp[i] = ftoi(if (min_err == err0) best_sel0 else best_sel);
-                }
-            } else if (n == 8) {
-                for (0..num_pixels) |i| {
-                    const pr = f32FromInt(pixels[i][0]);
-                    const pg = f32FromInt(pixels[i][1]);
-                    const pb = f32FromInt(pixels[i][2]);
-                    const pa = f32FromInt(pixels[i][3]);
-
-                    var e: [8]f32 = undefined;
-                    for (0..8) |k| e[k] = err4(wr, wg, wb, wa, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb, weighted_colors[k][3] - pa);
-
-                    var best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
-                    var best_sel: i32 = if (best_err == e[1]) 1 else 0;
-                    if (best_err == e[2]) best_sel = 2;
-                    if (best_err == e[3]) best_sel = 3;
-
-                    best_err = minF(best_err, minF(minF(minF(e[4], e[5]), e[6]), e[7]));
-                    if (best_err == e[4]) best_sel = 4;
-                    if (best_err == e[5]) best_sel = 5;
-                    if (best_err == e[6]) best_sel = 6;
-                    if (best_err == e[7]) best_sel = 7;
-
-                    total_errf += best_err;
-                    temp[i] = best_sel;
-                }
-            } else {
-                for (0..num_pixels) |i| {
-                    const pr = f32FromInt(pixels[i][0]);
-                    const pg = f32FromInt(pixels[i][1]);
-                    const pb = f32FromInt(pixels[i][2]);
-                    const pa = f32FromInt(pixels[i][3]);
-
-                    var e: [4]f32 = undefined;
-                    for (0..4) |k| e[k] = err4(wr, wg, wb, wa, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb, weighted_colors[k][3] - pa);
-
-                    const best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
-                    var best_sel: i32 = if (best_err == e[1]) 1 else 0;
-                    if (best_err == e[2]) best_sel = 2;
-                    if (best_err == e[3]) best_sel = 3;
-
-                    total_errf += best_err;
-                    temp[i] = best_sel;
-                }
+            var e: [8]V = undefined;
+            for (0..n) |k| {
+                const w = weighted_colors[k];
+                e[k] = err3V(vwr, vwg, vwb, splatF(w[0]) - px.r, splatF(w[1]) - px.g, splatF(w[2]) - px.b);
+                if (has_alpha) e[k] += errTermV(vwa, splatF(w[3]) - px.a);
             }
+
+            var best_err = minV(minV(minV(e[0], e[1]), e[2]), e[3]);
+            sel = @select(i32, best_err == e[1], @as(VI, @splat(1)), @as(VI, @splat(0)));
+            sel = @select(i32, best_err == e[2], @as(VI, @splat(2)), sel);
+            sel = @select(i32, best_err == e[3], @as(VI, @splat(3)), sel);
+            if (n == 8) {
+                best_err = minV(best_err, minV(minV(minV(e[4], e[5]), e[6]), e[7]));
+                inline for (4..8) |k| sel = @select(i32, best_err == e[k], @as(VI, @splat(k)), sel);
+            }
+            total_errf = sumLanes(best_err, num_pixels);
         }
     } else {
-        wg *= pr_weight;
-        wb *= pb_weight;
+        const vwr = splatF(wr);
+        const vwg = splatF(wg * pr_weight);
+        const vwb = splatF(wb * pb_weight);
+        const vwa = splatF(wa);
 
-        var weighted_colors_y: [16]f32 = undefined;
-        var weighted_colors_cr: [16]f32 = undefined;
-        var weighted_colors_cb: [16]f32 = undefined;
-
-        for (0..n) |i| {
-            const r = weighted_colors[i][0];
-            const g = weighted_colors[i][1];
-            const b = weighted_colors[i][2];
-            const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
-            weighted_colors_y[i] = y;
-            weighted_colors_cr[i] = r - y;
-            weighted_colors_cb[i] = b - y;
-        }
-
+        var best_err = splatF(1e+10);
+        sel = @splat(0);
         // Two copies of the loop, as in the original, so the alpha test is
         // not in the inner loop.
         inline for (.{ false, true }) |has_alpha| {
             if (params.has_alpha == has_alpha) {
-                for (0..num_pixels) |i| {
-                    const r = f32FromInt(pixels[i][0]);
-                    const g = f32FromInt(pixels[i][1]);
-                    const b = f32FromInt(pixels[i][2]);
-                    const a = f32FromInt(pixels[i][3]);
-
-                    const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
-                    const cr = r - y;
-                    const cb = b - y;
-
-                    var best_err: f32 = 1e+10;
-                    var best_sel: i32 = 0;
-
-                    for (0..n) |j| {
-                        const dl = y - weighted_colors_y[j];
-                        const dcr = cr - weighted_colors_cr[j];
-                        const dcb = cb - weighted_colors_cb[j];
-                        const err = if (has_alpha)
-                            err4(wr, wg, wb, wa, dl, dcr, dcb, a - weighted_colors[j][3])
-                        else
-                            err3(wr, wg, wb, dl, dcr, dcb);
-                        if (err < best_err) {
-                            best_err = err;
-                            best_sel = @intCast(j);
-                        }
+                for (0..n) |j| {
+                    const w = weighted_colors[j];
+                    const wy = w[0] * 0.2126 + w[1] * 0.7152 + w[2] * 0.0722;
+                    const dl = px.y - splatF(wy);
+                    const dcr = px.cr - splatF(w[0] - wy);
+                    const dcb = px.cb - splatF(w[2] - wy);
+                    var err = err3V(vwr, vwg, vwb, dl, dcr, dcb);
+                    if (has_alpha) {
+                        const da = px.a - splatF(w[3]);
+                        err += errTermV(vwa, da);
                     }
-
-                    total_errf += best_err;
-                    temp[i] = best_sel;
+                    const better = err < best_err;
+                    best_err = @select(f32, better, err, best_err);
+                    sel = @select(i32, better, @as(VI, @splat(@intCast(j))), sel);
                 }
             }
         }
+        total_errf = sumLanes(best_err, num_pixels);
     }
 
+    results.selectors_temp.* = sel;
+    const temp = results.selectors_temp;
     const total_err: u64 = @bitCast(ftoi64(total_errf));
 
     if (total_err < results.best_overall_err) {
@@ -1467,8 +1433,7 @@ fn findOptimalSolution(
     params: *const ColorCellCompressorParams,
     results: *ColorCellCompressorResults,
     pbit_search: bool,
-    num_pixels: u32,
-    pixels: []const ColorQuadI,
+    px: *const PixelLanes,
 ) u64 {
     const xl = vec4FSaturate(in_xl.*);
     const xh = vec4FSaturate(in_xh.*);
@@ -1494,13 +1459,13 @@ fn findOptimalSolution(
             fixDegenerateEndpoints(mode, &lo[1], &hi[1], &xl, &xh, @intCast(iscalep >> 1));
 
             if (!params.endpoints_share_pbit) {
-                _ = evaluateSolution(&lo[0], &hi[0], &.{ 0, 0 }, params, results, num_pixels, pixels);
-                _ = evaluateSolution(&lo[0], &hi[1], &.{ 0, 1 }, params, results, num_pixels, pixels);
-                _ = evaluateSolution(&lo[1], &hi[0], &.{ 1, 0 }, params, results, num_pixels, pixels);
-                _ = evaluateSolution(&lo[1], &hi[1], &.{ 1, 1 }, params, results, num_pixels, pixels);
+                _ = evaluateSolution(&lo[0], &hi[0], &.{ 0, 0 }, params, results, px);
+                _ = evaluateSolution(&lo[0], &hi[1], &.{ 0, 1 }, params, results, px);
+                _ = evaluateSolution(&lo[1], &hi[0], &.{ 1, 0 }, params, results, px);
+                _ = evaluateSolution(&lo[1], &hi[1], &.{ 1, 1 }, params, results, px);
             } else {
-                _ = evaluateSolution(&lo[0], &hi[0], &.{ 0, 0 }, params, results, num_pixels, pixels);
-                _ = evaluateSolution(&lo[1], &hi[1], &.{ 1, 1 }, params, results, num_pixels, pixels);
+                _ = evaluateSolution(&lo[0], &hi[0], &.{ 0, 0 }, params, results, px);
+                _ = evaluateSolution(&lo[1], &hi[1], &.{ 1, 1 }, params, results, px);
             }
         } else {
             // Compensated rounding: pick each endpoint's p-bit by its own error.
@@ -1583,7 +1548,7 @@ fn findOptimalSolution(
                 !std.mem.eql(i32, &best_max_color, &results.high_endpoint) or
                 best_pbits[0] != results.pbits[0] or best_pbits[1] != results.pbits[1])
             {
-                _ = evaluateSolution(&best_min_color, &best_max_color, &best_pbits, params, results, num_pixels, pixels);
+                _ = evaluateSolution(&best_min_color, &best_max_color, &best_pbits, params, results, px);
             }
         }
     } else {
@@ -1603,7 +1568,7 @@ fn findOptimalSolution(
             !std.mem.eql(i32, &trial_min_color, &results.low_endpoint) or
             !std.mem.eql(i32, &trial_max_color, &results.high_endpoint))
         {
-            _ = evaluateSolution(&trial_min_color, &trial_max_color, &.{ 0, 0 }, params, results, num_pixels, pixels);
+            _ = evaluateSolution(&trial_min_color, &trial_max_color, &.{ 0, 0 }, params, results, px);
         }
     }
 
@@ -1617,6 +1582,7 @@ fn leastSquaresThenOptimize(
     pbit_search: bool,
     num_pixels: u32,
     pixels: []const ColorQuadI,
+    px: *const PixelLanes,
     selectors: []const i32,
 ) u64 {
     var xl: Vec4F = @splat(0.0);
@@ -1630,7 +1596,7 @@ fn leastSquaresThenOptimize(
     }
     xl = vec4FMul(xl, 1.0 / 255.0);
     xh = vec4FMul(xh, 1.0 / 255.0);
-    return findOptimalSolution(mode, &xl, &xh, params, results, pbit_search, num_pixels, pixels);
+    return findOptimalSolution(mode, &xl, &xh, params, results, pbit_search, px);
 }
 
 /// Encodes one subset: an initial fit along the principal axis, least
@@ -1679,8 +1645,10 @@ fn colorCellCompression(
         }
     }
 
+    const lanes_px = PixelLanes.init(pixels, num_pixels);
+
     var mean_color: Vec4F = @splat(0.0);
-    for (pixels[0..num_pixels]) |px| mean_color = vec4FAdd(mean_color, vec4FFromColor(px));
+    for (pixels[0..num_pixels]) |p| mean_color = vec4FAdd(mean_color, vec4FFromColor(p));
 
     const mean_color_scaled = vec4FMul(mean_color, 1.0 / f32FromInt(num_pixels));
 
@@ -1790,13 +1758,13 @@ fn colorCellCompression(
         std.mem.swap(Vec4F, &min_color, &max_color);
     }
 
-    if (findOptimalSolution(mode, &min_color, &max_color, params, results, comp_params.pbit_search, num_pixels, pixels) == 0)
+    if (findOptimalSolution(mode, &min_color, &max_color, params, results, comp_params.pbit_search, &lanes_px) == 0)
         return 0;
 
     if (!refinement) return results.best_overall_err;
 
     for (0..comp_params.refinement_passes) |_| {
-        if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, results.selectors) == 0)
+        if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &lanes_px, results.selectors) == 0)
             return 0;
     }
 
@@ -1821,7 +1789,7 @@ fn colorCellCompression(
                 if (sel == min_sel and sel < params.num_selector_weights - 1) sel += 1;
                 selectors_temp1[i] = @intCast(sel);
             }
-            if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &selectors_temp1) == 0)
+            if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &lanes_px, &selectors_temp1) == 0)
                 return 0;
         }
 
@@ -1831,7 +1799,7 @@ fn colorCellCompression(
                 if (sel == max_sel and sel > 0) sel -= 1;
                 selectors_temp1[i] = @intCast(sel);
             }
-            if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &selectors_temp1) == 0)
+            if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &lanes_px, &selectors_temp1) == 0)
                 return 0;
         }
 
@@ -1845,7 +1813,7 @@ fn colorCellCompression(
                 }
                 selectors_temp1[i] = @intCast(sel);
             }
-            if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &selectors_temp1) == 0)
+            if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search, num_pixels, pixels, &lanes_px, &selectors_temp1) == 0)
                 return 0;
         }
 
@@ -1862,7 +1830,7 @@ fn colorCellCompression(
                         selectors_temp1[i] = ftoi(clampF(@floor(f32FromInt(max_selector) * (f32FromInt(selectors_temp[i]) - f32FromInt(ly)) / (f32FromInt(hy) - f32FromInt(ly)) + 0.5), 0, f32FromInt(max_selector)));
                     }
 
-                    if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search and (comp_params.uber_level >= 2), num_pixels, pixels, &selectors_temp1) == 0)
+                    if (leastSquaresThenOptimize(mode, params, results, comp_params.pbit_search and (comp_params.uber_level >= 2), num_pixels, pixels, &lanes_px, &selectors_temp1) == 0)
                         return 0;
                 }
             }
