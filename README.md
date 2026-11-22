@@ -137,18 +137,18 @@ image set:
 
 | feature | time, port / original | port vs original |
 | --- | ---: | ---: |
-| BC1 encode, normal | 0.87 | 13% faster |
-| BC7 encode, basic | 1.30 | 30% slower |
-| BC6H encode, unsigned | 0.63 | 37% faster |
-| BC7 decode | 0.45 | 55% faster |
-| BC6H decode, unsigned | 0.40 | 60% faster |
+| BC1 encode, normal | 0.97 | 3% faster |
+| BC7 encode, basic | 0.62 | 38% faster |
+| BC6H encode, unsigned | 0.79 | 21% faster |
+| BC7 decode | 0.61 | 39% faster |
+| BC6H decode, unsigned | 0.67 | 33% faster |
 
-The BC7 encoder is slower than bc7e at every level, by 18% to 30%.
+The BC7 encoder is faster than bc7e at every level, by 24% to 48%.
 
-AMD Ryzen 9 9950X3D, one thread, Linux 7.3, Zig 0.17.0 ReleaseFast against
-Zig's clang `-O3`, at commit `3ee9b14`; each row is from the run with the
-median time ratio of three; a load average of 2.3 to 3.0 on 32 hardware
-threads.
+An Intel Xeon (Granite Rapids) cloud VM with 4 virtual CPUs, one thread,
+Linux 6.18, Zig 0.17.0 ReleaseFast against Zig's clang `-O3`, at commit
+`94cc7c0`; each row is from the run with the median time ratio of three.
+Earlier figures were from a Ryzen 9 9950X3D and are not comparable.
 
 - [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md): every row, the flags on both
   sides, the run counts and the command.
