@@ -128,15 +128,18 @@ did change: its alpha is a BC4 block.
 
 ## Notes and known biases
 
-- **BC7 encoding** is faster than bc7e's scalar C++ build (the one
-  vendored here; bc7e's ISPC build is not measured) at every level on this
-  machine, time ratio 0.53 to 0.76. Before this pass it was 1.14 to 1.31
+- **BC7 encoding** is faster than bc7e's scalar C++ build, the one
+  vendored here, at every level on this machine, time ratio 0.53 to 0.76. Before this pass it was 1.14 to 1.31
   here. The per-pixel loops run on vectors of the block's 16 pixels: the
   palette evaluation, the partition estimate (every subset of a partition
   in one pass) and the mode 4 and 5 alpha search. Each lane does the
   original's float steps in its order, and the sums across pixels stay
   scalar and in pixel order, so the bytes are the same; unit tests compare
   each vector loop with the scalar loop it replaced.
+- **bc7e's ISPC build is not measured.** It is bc7e's fast build: the
+  same search run across SIMD lanes, typically several times faster than
+  the scalar build. These rows say nothing about how zig-bcn compares with
+  it.
 - **What is not faster.** The rest of the BC7 search is still the scalar
   translation: the principal-axis fit, the least squares refinement and the
   endpoint quantization, whose sums over pixels must keep their order. In a

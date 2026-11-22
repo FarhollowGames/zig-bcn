@@ -138,14 +138,18 @@ image set:
 | feature | time, port / original | port vs original |
 | --- | ---: | ---: |
 | BC1 encode, normal | 0.97 | 3% faster |
-| BC7 encode, basic | 0.63 | 37% faster |
+| BC7 encode, basic, against bc7e's scalar C++ build | 0.63 | 37% faster |
 | BC6H encode, unsigned | 0.79 | 21% faster |
 | BC7 decode | 0.61 | 39% faster |
 | BC6H decode, unsigned | 0.66 | 34% faster |
 
-The BC7 encoder is faster than bc7e's scalar C++ build at every level, by
-24% to 47%, built for the CPU it runs on; less on older vector sets (see
-`doc/BENCHMARKS.md`).
+The BC7 rows compare with bc7e's scalar C++ build, the one the port is
+translated from and tested against: zig-bcn takes 24% to 47% less time at
+every level, built for the CPU it runs on, and less so on older vector
+sets. bc7e's fast build is its ISPC version, which runs the same search
+across SIMD lanes and is typically several times faster than the scalar
+build. zig-bcn has not been measured against it yet, so it should not be
+taken to be as fast as bc7e's ISPC build.
 
 An Intel Xeon (Granite Rapids) cloud VM with 4 virtual CPUs, one thread,
 Linux 6.18, Zig 0.17.0 ReleaseFast against Zig's clang `-O3`, at commit
