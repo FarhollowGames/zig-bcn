@@ -1213,6 +1213,8 @@ fn errTermV(w: V, d: V) V {
 }
 
 /// The selector weights as floats, entry k in lane k, and 0 past them.
+/// Every setter of `selector_weights` uses weights2, weights3 or weights4,
+/// so the count names the table; the assert checks it.
 fn selectorWeightLanes(params: *const ColorCellCompressorParams) V {
     inline for (.{ &weights2, &weights3, &weights4 }) |w| {
         if (params.num_selector_weights == w.len) {
@@ -3699,6 +3701,12 @@ fn testPixels(random: std.Random, out: *[16]ColorQuadI) void {
     }
 }
 
+/// A channel weight: small, or anywhere in u32, as mode 6 and 7's
+/// multiplied weights can be.
+fn testWeight(random: std.Random) u32 {
+    return if (random.boolean()) random.intRangeAtMost(u32, 0, 300) else random.int(u32);
+}
+
 test "evaluateSolution on lanes matches the scalar loops" {
     var prng: std.Random.DefaultPrng = .init(0xbc7e_1a4e);
     const random = prng.random();
@@ -3721,7 +3729,7 @@ test "evaluateSolution on lanes matches the scalar loops" {
         params.weights = if (random.boolean())
             .{ 128, 64, 16, 256 }
         else
-            .{ random.intRangeAtMost(u32, 0, 300), random.intRangeAtMost(u32, 0, 300), random.intRangeAtMost(u32, 0, 300), random.intRangeAtMost(u32, 0, 300) };
+            .{ testWeight(random), testWeight(random), testWeight(random), testWeight(random) };
 
         const top: i32 = (@as(i32, 1) << @intCast(params.comp_bits)) - 1;
         var low: ColorQuadI = undefined;
@@ -3763,10 +3771,10 @@ test "partition estimates on lanes match the scalar loops" {
         const px = PixelLanes.init(&pixels, lanes);
         var comp_params = Params.initDefaults(random.boolean());
         if (random.boolean()) {
-            for (&comp_params.weights) |*w| w.* = random.intRangeAtMost(u32, 0, 300);
+            for (&comp_params.weights) |*w| w.* = testWeight(random);
         }
         if (random.boolean()) {
-            for (&comp_params.alpha_settings.mode67_error_weight_mul) |*w| w.* = random.intRangeAtMost(u32, 0, 4);
+            for (&comp_params.alpha_settings.mode67_error_weight_mul) |*w| w.* = if (random.boolean()) random.intRangeAtMost(u32, 0, 4) else random.int(u32);
         }
         for ([_]u32{ 0, 1, 2, 3, 7 }) |mode| {
             const params = estimateParams(mode, &comp_params);

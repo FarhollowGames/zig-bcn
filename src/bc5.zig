@@ -92,20 +92,22 @@ pub fn decodeImageRows(src: []const u8, dst: image.ImageMut(u8), rows: image.Blo
 }
 
 /// Writes a block's red and green lanes into channels 0 and 1 of `out`,
-/// leaving the other channels as they were. A block wholly inside an image
-/// of 2 or 4 channels is written a row of 4 pixels at a time, from the
-/// lanes; any other goes through `putBlock`.
+/// writing no other byte. A block wholly inside an image of 2 or 4 channels
+/// is written from the lanes, a row or a pixel's two bytes at a time; any
+/// other goes through `putBlock`.
 fn putRedGreen(out: image.ImageMut(u8), bx: u32, by: u32, r: @Vector(16, u8), g: @Vector(16, u8)) void {
-    const inside = (bx + 1) * 4 <= out.width and (by + 1) * 4 <= out.height;
+    const inside = out.width - bx * 4 >= 4 and out.height - by * 4 >= 4;
     if (inside and (out.channels == 2 or out.channels == 4)) {
+        // Each pixel's red and green as one 16-bit lane, in pixel order.
+        const pairs: @Vector(16, u16) = @bitCast(@as(@Vector(32, u8), @shuffle(u8, r, g, alternate)));
         inline for (0..4) |yy| {
             const at = @as(usize, by * 4 + yy) * out.stride + @as(usize, bx) * 4 * out.channels;
             if (out.channels == 2) {
-                out.pixels[at..][0..8].* = @shuffle(u8, r, g, rowPairs(yy));
+                out.pixels[at..][0..8].* = @bitCast(@as(@Vector(4, u16), @shuffle(u16, pairs, undefined, [4]i32{ yy * 4, yy * 4 + 1, yy * 4 + 2, yy * 4 + 3 })));
             } else {
-                const row = out.pixels[at..][0..16];
-                const pairs: @Vector(16, u8) = @shuffle(u8, r, g, rowQuads(yy));
-                row.* = @select(u8, red_green_of_rgba, pairs, @as(@Vector(16, u8), row.*));
+                // Only red and green are written: another thread may own
+                // blue and alpha.
+                inline for (0..4) |x| out.pixels[at + 4 * x ..][0..2].* = @bitCast(pairs[yy * 4 + x]);
             }
         }
         return;
@@ -114,30 +116,7 @@ fn putRedGreen(out: image.ImageMut(u8), bx: u32, by: u32, r: @Vector(16, u8), g:
     out.putBlock(2, bx, by, @ptrCast(&pairs));
 }
 
-/// Row `yy` of the block as pixels of two channels: r, g, r, g and so on.
-fn rowPairs(comptime yy: usize) [8]i32 {
-    var m: [8]i32 = undefined;
-    for (0..4) |x| {
-        m[2 * x] = yy * 4 + x;
-        m[2 * x + 1] = ~@as(i32, yy * 4 + x);
-    }
-    return m;
-}
 
-/// Row `yy` of the block in the red and green bytes of four-channel pixels;
-/// the blue and alpha lanes repeat red and green and are not stored.
-fn rowQuads(comptime yy: usize) [16]i32 {
-    var m: [16]i32 = undefined;
-    for (0..4) |x| {
-        m[4 * x] = yy * 4 + x;
-        m[4 * x + 1] = ~@as(i32, yy * 4 + x);
-        m[4 * x + 2] = yy * 4 + x;
-        m[4 * x + 3] = ~@as(i32, yy * 4 + x);
-    }
-    return m;
-}
-
-const red_green_of_rgba: @Vector(16, bool) = .{ true, true, false, false, true, true, false, false, true, true, false, false, true, true, false, false };
 
 /// Decodes signed blocks (BC5_SNORM) into channels 0 and 1 of `dst`, as
 /// bytes in the usual normal-map convention, where a byte u stands for
