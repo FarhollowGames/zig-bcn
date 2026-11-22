@@ -398,6 +398,10 @@ pub const weights2 = [4]u32{ 0, 21, 43, 64 };
 pub const weights3 = [8]u32{ 0, 9, 18, 27, 37, 46, 55, 64 };
 pub const weights4 = [16]u32{ 0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64 };
 
+comptime {
+    for (weights4, 0..) |w, i| assert(w == (64 * i + 7) / 15);
+}
+
 // For each weight w of the tables above: w * w, (1 - w) * w, (1 - w) * (1 - w)
 // and w, as the least squares fit needs them. Rounded to six decimals in the
 // original, so they are copied rather than computed.
@@ -1208,10 +1212,16 @@ fn errTermV(w: V, d: V) V {
     return w * d * d;
 }
 
-/// `table[idx[i]]` in every lane.
-fn gatherLanes(table: *const [lanes]f32, idx: VI) V {
-    var out: [lanes]f32 = undefined;
-    inline for (0..lanes) |i| out[i] = table[@intCast(idx[i])];
+/// Entry `idx` of the 16-entry palette from `lo` to `hi`, in every lane:
+/// `floor((lo * (64 - w) + hi * w + 32) / 64)` with w = weights4[idx], the
+/// palette loop's float steps. They give `lo` and `hi` exactly at 0 and 15,
+/// which the loop does not compute. weights4[i] is (64 * i + 7) / 15.
+fn paletteLanes(lo: Vec4F, hi: Vec4F, idx: VI) [4]V {
+    const sw: V = @floatFromInt(@divTrunc(idx * @as(VI, @splat(64)) + @as(VI, @splat(7)), @as(VI, @splat(15))));
+    var out: [4]V = undefined;
+    inline for (0..4) |c| {
+        out[c] = @floor((splatF(lo[c]) * (splatF(64.0) - sw) + splatF(hi[c]) * sw + splatF(32)) * splatF(1.0 / 64.0));
+    }
     return out;
 }
 
@@ -1304,16 +1314,17 @@ fn evaluateSolution(
             const idx1: VI = @intFromFloat(best_sel);
             const idx0: VI = @intFromFloat(best_sel0);
 
-            var table: [4][lanes]f32 = undefined;
-            inline for (0..4) |c| {
-                inline for (0..16) |k| table[c][k] = weighted_colors[k][c];
-            }
+            // The palette entries the two candidates pick, computed in each
+            // lane from its index as the palette loop above computes them.
+            assert(params.selector_weights.ptr == &weights4);
+            const p0 = paletteLanes(weighted_colors[0], weighted_colors[15], idx0);
+            const p1 = paletteLanes(weighted_colors[0], weighted_colors[15], idx1);
 
-            var e0 = err3V(vwr, vwg, vwb, gatherLanes(&table[0], idx0) - px.r, gatherLanes(&table[1], idx0) - px.g, gatherLanes(&table[2], idx0) - px.b);
-            var e1 = err3V(vwr, vwg, vwb, gatherLanes(&table[0], idx1) - px.r, gatherLanes(&table[1], idx1) - px.g, gatherLanes(&table[2], idx1) - px.b);
+            var e0 = err3V(vwr, vwg, vwb, p0[0] - px.r, p0[1] - px.g, p0[2] - px.b);
+            var e1 = err3V(vwr, vwg, vwb, p1[0] - px.r, p1[1] - px.g, p1[2] - px.b);
             if (has_alpha) {
-                e0 += errTermV(vwa, gatherLanes(&table[3], idx0) - px.a);
-                e1 += errTermV(vwa, gatherLanes(&table[3], idx1) - px.a);
+                e0 += errTermV(vwa, p0[3] - px.a);
+                e1 += errTermV(vwa, p1[3] - px.a);
             }
             const min_err = minV(e0, e1);
             total_errf = sumLanes(min_err, num_pixels);
