@@ -1907,150 +1907,6 @@ fn colorCellCompression(
     return results.best_overall_err;
 }
 
-/// A cheap error estimate for one subset: project onto the bounding box
-/// diagonal and quantize to the mode's index count. Used to rank partitions.
-fn colorCellCompressionEst(mode: u32, params: *const ColorCellCompressorParams, num_pixels: u32, pixels: []const ColorQuadI) u64 {
-    assert(params.num_selector_weights == 4 or params.num_selector_weights == 8);
-
-    var lr: f32 = 255;
-    var lg: f32 = 255;
-    var lb: f32 = 255;
-    var hr: f32 = 0;
-    var hg: f32 = 0;
-    var hb: f32 = 0;
-    for (pixels[0..num_pixels]) |c| {
-        const r = f32FromInt(c[0]);
-        const g = f32FromInt(c[1]);
-        const b = f32FromInt(c[2]);
-        lr = minF(lr, r);
-        lg = minF(lg, g);
-        lb = minF(lb, b);
-        hr = maxF(hr, r);
-        hg = maxF(hg, g);
-        hb = maxF(hb, b);
-    }
-
-    const n: u32 = @as(u32, 1) << @intCast(color_index_bitcount[mode]);
-
-    const sr = lr;
-    const sg = lg;
-    const sb = lb;
-
-    const dir = hr - lr;
-    const dig = hg - lg;
-    const dib = hb - lb;
-
-    const far = dir;
-    const fag = dig;
-    const fab = dib;
-
-    const low = far * sr + fag * sg + fab * sb;
-    const high = far * hr + fag * hg + fab * hb;
-
-    const scale = (f32FromInt(n) - 1) / ((high - low) + denom_bias);
-    const inv_n = 1.0 / (f32FromInt(n) - 1);
-
-    var total_errf: f32 = 0;
-
-    // Perceptual weighting is approximated here: under 0.05 dB of luma PSNR
-    // across a large corpus, for half the time.
-    const weighted = params.weights[0] != 1 or params.weights[1] != 1 or params.weights[2] != 1;
-    const wr = f32FromInt(params.weights[0]);
-    const wg = f32FromInt(params.weights[1]);
-    const wb = f32FromInt(params.weights[2]);
-
-    for (pixels[0..num_pixels]) |c| {
-        const d = far * f32FromInt(c[0]) + fag * f32FromInt(c[1]) + fab * f32FromInt(c[2]);
-
-        const s = clampF(@floor((d - low) * scale + 0.5) * inv_n, 0.0, 1.0);
-
-        const itr = sr + dir * s;
-        const itg = sg + dig * s;
-        const itb = sb + dib * s;
-
-        const dr = itr - f32FromInt(c[0]);
-        const dg = itg - f32FromInt(c[1]);
-        const db = itb - f32FromInt(c[2]);
-
-        if (weighted) {
-            total_errf += wr * dr * dr + wg * dg * dg + wb * db * db;
-        } else {
-            total_errf += dr * dr + dg * dg + db * db;
-        }
-    }
-
-    return @bitCast(ftoi64(total_errf));
-}
-
-fn colorCellCompressionEstMode7(mode: u32, params: *const ColorCellCompressorParams, num_pixels: u32, pixels: []const ColorQuadI) u64 {
-    assert(mode == 7 and params.num_selector_weights == 4);
-
-    var lo: [4]f32 = @splat(255);
-    var hi: [4]f32 = @splat(0);
-    for (pixels[0..num_pixels]) |c| {
-        for (0..4) |k| {
-            const v = f32FromInt(c[k]);
-            lo[k] = minF(lo[k], v);
-            hi[k] = maxF(hi[k], v);
-        }
-    }
-
-    const n: u32 = 4;
-
-    const sr = lo[0];
-    const sg = lo[1];
-    const sb = lo[2];
-    const sa = lo[3];
-
-    const dir = hi[0] - lo[0];
-    const dig = hi[1] - lo[1];
-    const dib = hi[2] - lo[2];
-    const dia = hi[3] - lo[3];
-
-    const far = dir;
-    const fag = dig;
-    const fab = dib;
-    const faa = dia;
-
-    const low = far * sr + fag * sg + fab * sb + faa * sa;
-    const high = far * hi[0] + fag * hi[1] + fab * hi[2] + faa * hi[3];
-
-    const scale = (f32FromInt(n) - 1) / ((high - low) + denom_bias);
-    const inv_n = 1.0 / (f32FromInt(n) - 1);
-
-    var total_errf: f32 = 0;
-
-    const weighted = !params.perceptual and (params.weights[0] != 1 or params.weights[1] != 1 or params.weights[2] != 1 or params.weights[3] != 1);
-    const wr = f32FromInt(params.weights[0]);
-    const wg = f32FromInt(params.weights[1]);
-    const wb = f32FromInt(params.weights[2]);
-    const wa = f32FromInt(params.weights[3]);
-
-    for (pixels[0..num_pixels]) |c| {
-        const d = far * f32FromInt(c[0]) + fag * f32FromInt(c[1]) + fab * f32FromInt(c[2]) + faa * f32FromInt(c[3]);
-
-        const s = clampF(@floor((d - low) * scale + 0.5) * inv_n, 0.0, 1.0);
-
-        const itr = sr + dir * s;
-        const itg = sg + dig * s;
-        const itb = sb + dib * s;
-        const ita = sa + dia * s;
-
-        const dr = itr - f32FromInt(c[0]);
-        const dg = itg - f32FromInt(c[1]);
-        const db = itb - f32FromInt(c[2]);
-        const da = ita - f32FromInt(c[3]);
-
-        if (weighted) {
-            total_errf += wr * dr * dr + wg * dg * dg + wb * db * db + wa * da * da;
-        } else {
-            total_errf += dr * dr + dg * dg + db * db + da * da;
-        }
-    }
-
-    return @bitCast(ftoi64(total_errf));
-}
-
 fn estimateParams(mode: u32, comp_params: *const Params) ColorCellCompressorParams {
     var params: ColorCellCompressorParams = .{};
     if (color_index_bitcount[mode] == 2) {
@@ -3350,4 +3206,601 @@ pub fn compressBlockSingleMode(block: *[16]u8, pixels_rgba: *const [16][4]u8, co
     }
 
     return best_err;
+}
+
+/// The scalar loops the lane code replaced, as translated from the
+/// original, for the tests below: each lane version must give their exact
+/// results on any input, including those the image set never reaches.
+const scalar_reference = struct {
+    fn evaluateSolution(
+        low: *const ColorQuadI,
+        high: *const ColorQuadI,
+        pbits: *const [2]u32,
+        params: *const ColorCellCompressorParams,
+        results: *ColorCellCompressorResults,
+        num_pixels: u32,
+        pixels: []const ColorQuadI,
+    ) u64 {
+        var quant_min_color = low.*;
+        var quant_max_color = high.*;
+
+        if (params.has_pbits) {
+            var min_pbit: u32 = undefined;
+            var max_pbit: u32 = undefined;
+            if (params.endpoints_share_pbit) {
+                min_pbit = pbits[0];
+                max_pbit = pbits[0];
+            } else {
+                min_pbit = pbits[0];
+                max_pbit = pbits[1];
+            }
+            for (0..4) |c| {
+                quant_min_color[c] = (low[c] << 1) | @as(i32, @intCast(min_pbit));
+                quant_max_color[c] = (high[c] << 1) | @as(i32, @intCast(max_pbit));
+            }
+        }
+
+        const actual_min_color = scaleColor(quant_min_color, params);
+        const actual_max_color = scaleColor(quant_max_color, params);
+
+        const n = params.num_selector_weights;
+        assert(n == 4 or n == 8 or n == 16);
+        const nc: u32 = if (params.has_alpha) 4 else 3;
+
+        var total_errf: f32 = 0;
+
+        const wr = f32FromInt(params.weights[0]);
+        var wg = f32FromInt(params.weights[1]);
+        var wb = f32FromInt(params.weights[2]);
+        const wa = f32FromInt(params.weights[3]);
+
+        // Entries 1..n-2 get only nc channels; the alpha of those is read only
+        // when nc is 4.
+        var weighted_colors: [16][4]f32 = undefined;
+        weighted_colors[0] = vec4FFromColor(actual_min_color);
+        weighted_colors[n - 1] = vec4FFromColor(actual_max_color);
+
+        for (1..n - 1) |i| {
+            for (0..nc) |j| {
+                const sw = f32FromInt(params.selector_weights[i]);
+                weighted_colors[i][j] = @floor((weighted_colors[0][j] * (64.0 - sw) + weighted_colors[n - 1][j] * sw + 32) * (1.0 / 64.0));
+            }
+        }
+
+        const temp = results.selectors_temp;
+
+        if (!params.perceptual) {
+            if (!params.has_alpha) {
+                if (n == 16) {
+                    var lr = f32FromInt(actual_min_color[0]);
+                    var lg = f32FromInt(actual_min_color[1]);
+                    var lb = f32FromInt(actual_min_color[2]);
+
+                    const dr = f32FromInt(actual_max_color[0]) - lr;
+                    const dg = f32FromInt(actual_max_color[1]) - lg;
+                    const db = f32FromInt(actual_max_color[2]) - lb;
+
+                    const f = f32FromInt(n) / (dr * dr + dg * dg + db * db + denom_bias);
+
+                    lr *= -dr;
+                    lg *= -dg;
+                    lb *= -db;
+
+                    for (0..num_pixels) |i| {
+                        const c = pixels[i];
+                        const r = f32FromInt(c[0]);
+                        const g = f32FromInt(c[1]);
+                        const b = f32FromInt(c[2]);
+
+                        var best_sel = @floor(((r * dr + lr) + (g * dg + lg) + (b * db + lb)) * f + 0.5);
+                        best_sel = clampF(best_sel, 1, f32FromInt(n - 1));
+
+                        const best_sel0 = best_sel - 1;
+
+                        const w0 = weighted_colors[@intCast(ftoi(best_sel0))];
+                        const err0 = err3(wr, wg, wb, w0[0] - r, w0[1] - g, w0[2] - b);
+
+                        const w1 = weighted_colors[@intCast(ftoi(best_sel))];
+                        const err1 = err3(wr, wg, wb, w1[0] - r, w1[1] - g, w1[2] - b);
+
+                        const min_err = minF(err0, err1);
+                        total_errf += min_err;
+                        temp[i] = ftoi(if (min_err == err0) best_sel0 else best_sel);
+                    }
+                } else if (n == 8) {
+                    for (0..num_pixels) |i| {
+                        const pr = f32FromInt(pixels[i][0]);
+                        const pg = f32FromInt(pixels[i][1]);
+                        const pb = f32FromInt(pixels[i][2]);
+
+                        var e: [8]f32 = undefined;
+                        for (0..8) |k| e[k] = err3(wr, wg, wb, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb);
+
+                        var best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
+                        var best_sel: i32 = if (best_err == e[1]) 1 else 0;
+                        if (best_err == e[2]) best_sel = 2;
+                        if (best_err == e[3]) best_sel = 3;
+
+                        best_err = minF(best_err, minF(minF(minF(e[4], e[5]), e[6]), e[7]));
+                        if (best_err == e[4]) best_sel = 4;
+                        if (best_err == e[5]) best_sel = 5;
+                        if (best_err == e[6]) best_sel = 6;
+                        if (best_err == e[7]) best_sel = 7;
+
+                        total_errf += best_err;
+                        temp[i] = best_sel;
+                    }
+                } else {
+                    for (0..num_pixels) |i| {
+                        const pr = f32FromInt(pixels[i][0]);
+                        const pg = f32FromInt(pixels[i][1]);
+                        const pb = f32FromInt(pixels[i][2]);
+
+                        var e: [4]f32 = undefined;
+                        for (0..4) |k| e[k] = err3(wr, wg, wb, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb);
+
+                        const best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
+                        var best_sel: i32 = if (best_err == e[1]) 1 else 0;
+                        if (best_err == e[2]) best_sel = 2;
+                        if (best_err == e[3]) best_sel = 3;
+
+                        total_errf += best_err;
+                        temp[i] = best_sel;
+                    }
+                }
+            } else {
+                // alpha
+                if (n == 16) {
+                    var lr = f32FromInt(actual_min_color[0]);
+                    var lg = f32FromInt(actual_min_color[1]);
+                    var lb = f32FromInt(actual_min_color[2]);
+                    var la = f32FromInt(actual_min_color[3]);
+
+                    const dr = f32FromInt(actual_max_color[0]) - lr;
+                    const dg = f32FromInt(actual_max_color[1]) - lg;
+                    const db = f32FromInt(actual_max_color[2]) - lb;
+                    const da = f32FromInt(actual_max_color[3]) - la;
+
+                    const f = f32FromInt(n) / (dr * dr + dg * dg + db * db + da * da + denom_bias);
+
+                    lr *= -dr;
+                    lg *= -dg;
+                    lb *= -db;
+                    la *= -da;
+
+                    for (0..num_pixels) |i| {
+                        const c = pixels[i];
+                        const r = f32FromInt(c[0]);
+                        const g = f32FromInt(c[1]);
+                        const b = f32FromInt(c[2]);
+                        const a = f32FromInt(c[3]);
+
+                        var best_sel = @floor(((r * dr + lr) + (g * dg + lg) + (b * db + lb) + (a * da + la)) * f + 0.5);
+                        best_sel = clampF(best_sel, 1, f32FromInt(n - 1));
+
+                        const best_sel0 = best_sel - 1;
+
+                        const w0 = weighted_colors[@intCast(ftoi(best_sel0))];
+                        const err0 = err4(wr, wg, wb, wa, w0[0] - r, w0[1] - g, w0[2] - b, w0[3] - a);
+
+                        const w1 = weighted_colors[@intCast(ftoi(best_sel))];
+                        const err1 = err4(wr, wg, wb, wa, w1[0] - r, w1[1] - g, w1[2] - b, w1[3] - a);
+
+                        const min_err = minF(err0, err1);
+                        total_errf += min_err;
+                        temp[i] = ftoi(if (min_err == err0) best_sel0 else best_sel);
+                    }
+                } else if (n == 8) {
+                    for (0..num_pixels) |i| {
+                        const pr = f32FromInt(pixels[i][0]);
+                        const pg = f32FromInt(pixels[i][1]);
+                        const pb = f32FromInt(pixels[i][2]);
+                        const pa = f32FromInt(pixels[i][3]);
+
+                        var e: [8]f32 = undefined;
+                        for (0..8) |k| e[k] = err4(wr, wg, wb, wa, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb, weighted_colors[k][3] - pa);
+
+                        var best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
+                        var best_sel: i32 = if (best_err == e[1]) 1 else 0;
+                        if (best_err == e[2]) best_sel = 2;
+                        if (best_err == e[3]) best_sel = 3;
+
+                        best_err = minF(best_err, minF(minF(minF(e[4], e[5]), e[6]), e[7]));
+                        if (best_err == e[4]) best_sel = 4;
+                        if (best_err == e[5]) best_sel = 5;
+                        if (best_err == e[6]) best_sel = 6;
+                        if (best_err == e[7]) best_sel = 7;
+
+                        total_errf += best_err;
+                        temp[i] = best_sel;
+                    }
+                } else {
+                    for (0..num_pixels) |i| {
+                        const pr = f32FromInt(pixels[i][0]);
+                        const pg = f32FromInt(pixels[i][1]);
+                        const pb = f32FromInt(pixels[i][2]);
+                        const pa = f32FromInt(pixels[i][3]);
+
+                        var e: [4]f32 = undefined;
+                        for (0..4) |k| e[k] = err4(wr, wg, wb, wa, weighted_colors[k][0] - pr, weighted_colors[k][1] - pg, weighted_colors[k][2] - pb, weighted_colors[k][3] - pa);
+
+                        const best_err = minF(minF(minF(e[0], e[1]), e[2]), e[3]);
+                        var best_sel: i32 = if (best_err == e[1]) 1 else 0;
+                        if (best_err == e[2]) best_sel = 2;
+                        if (best_err == e[3]) best_sel = 3;
+
+                        total_errf += best_err;
+                        temp[i] = best_sel;
+                    }
+                }
+            }
+        } else {
+            wg *= pr_weight;
+            wb *= pb_weight;
+
+            var weighted_colors_y: [16]f32 = undefined;
+            var weighted_colors_cr: [16]f32 = undefined;
+            var weighted_colors_cb: [16]f32 = undefined;
+
+            for (0..n) |i| {
+                const r = weighted_colors[i][0];
+                const g = weighted_colors[i][1];
+                const b = weighted_colors[i][2];
+                const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+                weighted_colors_y[i] = y;
+                weighted_colors_cr[i] = r - y;
+                weighted_colors_cb[i] = b - y;
+            }
+
+            // Two copies of the loop, as in the original, so the alpha test is
+            // not in the inner loop.
+            inline for (.{ false, true }) |has_alpha| {
+                if (params.has_alpha == has_alpha) {
+                    for (0..num_pixels) |i| {
+                        const r = f32FromInt(pixels[i][0]);
+                        const g = f32FromInt(pixels[i][1]);
+                        const b = f32FromInt(pixels[i][2]);
+                        const a = f32FromInt(pixels[i][3]);
+
+                        const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+                        const cr = r - y;
+                        const cb = b - y;
+
+                        var best_err: f32 = 1e+10;
+                        var best_sel: i32 = 0;
+
+                        for (0..n) |j| {
+                            const dl = y - weighted_colors_y[j];
+                            const dcr = cr - weighted_colors_cr[j];
+                            const dcb = cb - weighted_colors_cb[j];
+                            const err = if (has_alpha)
+                                err4(wr, wg, wb, wa, dl, dcr, dcb, a - weighted_colors[j][3])
+                            else
+                                err3(wr, wg, wb, dl, dcr, dcb);
+                            if (err < best_err) {
+                                best_err = err;
+                                best_sel = @intCast(j);
+                            }
+                        }
+
+                        total_errf += best_err;
+                        temp[i] = best_sel;
+                    }
+                }
+            }
+        }
+
+        const total_err: u64 = @bitCast(ftoi64(total_errf));
+
+        if (total_err < results.best_overall_err) {
+            results.best_overall_err = total_err;
+            results.low_endpoint = low.*;
+            results.high_endpoint = high.*;
+            results.pbits = pbits.*;
+            @memcpy(results.selectors[0..num_pixels], temp[0..num_pixels]);
+        }
+
+        return total_err;
+    }
+
+    /// A cheap error estimate for one subset: project onto the bounding box
+    /// diagonal and quantize to the mode's index count. Used to rank partitions.
+    fn colorCellCompressionEst(mode: u32, params: *const ColorCellCompressorParams, num_pixels: u32, pixels: []const ColorQuadI) u64 {
+        assert(params.num_selector_weights == 4 or params.num_selector_weights == 8);
+
+        var lr: f32 = 255;
+        var lg: f32 = 255;
+        var lb: f32 = 255;
+        var hr: f32 = 0;
+        var hg: f32 = 0;
+        var hb: f32 = 0;
+        for (pixels[0..num_pixels]) |c| {
+            const r = f32FromInt(c[0]);
+            const g = f32FromInt(c[1]);
+            const b = f32FromInt(c[2]);
+            lr = minF(lr, r);
+            lg = minF(lg, g);
+            lb = minF(lb, b);
+            hr = maxF(hr, r);
+            hg = maxF(hg, g);
+            hb = maxF(hb, b);
+        }
+
+        const n: u32 = @as(u32, 1) << @intCast(color_index_bitcount[mode]);
+
+        const sr = lr;
+        const sg = lg;
+        const sb = lb;
+
+        const dir = hr - lr;
+        const dig = hg - lg;
+        const dib = hb - lb;
+
+        const far = dir;
+        const fag = dig;
+        const fab = dib;
+
+        const low = far * sr + fag * sg + fab * sb;
+        const high = far * hr + fag * hg + fab * hb;
+
+        const scale = (f32FromInt(n) - 1) / ((high - low) + denom_bias);
+        const inv_n = 1.0 / (f32FromInt(n) - 1);
+
+        var total_errf: f32 = 0;
+
+        // Perceptual weighting is approximated here: under 0.05 dB of luma PSNR
+        // across a large corpus, for half the time.
+        const weighted = params.weights[0] != 1 or params.weights[1] != 1 or params.weights[2] != 1;
+        const wr = f32FromInt(params.weights[0]);
+        const wg = f32FromInt(params.weights[1]);
+        const wb = f32FromInt(params.weights[2]);
+
+        for (pixels[0..num_pixels]) |c| {
+            const d = far * f32FromInt(c[0]) + fag * f32FromInt(c[1]) + fab * f32FromInt(c[2]);
+
+            const s = clampF(@floor((d - low) * scale + 0.5) * inv_n, 0.0, 1.0);
+
+            const itr = sr + dir * s;
+            const itg = sg + dig * s;
+            const itb = sb + dib * s;
+
+            const dr = itr - f32FromInt(c[0]);
+            const dg = itg - f32FromInt(c[1]);
+            const db = itb - f32FromInt(c[2]);
+
+            if (weighted) {
+                total_errf += wr * dr * dr + wg * dg * dg + wb * db * db;
+            } else {
+                total_errf += dr * dr + dg * dg + db * db;
+            }
+        }
+
+        return @bitCast(ftoi64(total_errf));
+    }
+
+    fn colorCellCompressionEstMode7(mode: u32, params: *const ColorCellCompressorParams, num_pixels: u32, pixels: []const ColorQuadI) u64 {
+        assert(mode == 7 and params.num_selector_weights == 4);
+
+        var lo: [4]f32 = @splat(255);
+        var hi: [4]f32 = @splat(0);
+        for (pixels[0..num_pixels]) |c| {
+            for (0..4) |k| {
+                const v = f32FromInt(c[k]);
+                lo[k] = minF(lo[k], v);
+                hi[k] = maxF(hi[k], v);
+            }
+        }
+
+        const n: u32 = 4;
+
+        const sr = lo[0];
+        const sg = lo[1];
+        const sb = lo[2];
+        const sa = lo[3];
+
+        const dir = hi[0] - lo[0];
+        const dig = hi[1] - lo[1];
+        const dib = hi[2] - lo[2];
+        const dia = hi[3] - lo[3];
+
+        const far = dir;
+        const fag = dig;
+        const fab = dib;
+        const faa = dia;
+
+        const low = far * sr + fag * sg + fab * sb + faa * sa;
+        const high = far * hi[0] + fag * hi[1] + fab * hi[2] + faa * hi[3];
+
+        const scale = (f32FromInt(n) - 1) / ((high - low) + denom_bias);
+        const inv_n = 1.0 / (f32FromInt(n) - 1);
+
+        var total_errf: f32 = 0;
+
+        const weighted = !params.perceptual and (params.weights[0] != 1 or params.weights[1] != 1 or params.weights[2] != 1 or params.weights[3] != 1);
+        const wr = f32FromInt(params.weights[0]);
+        const wg = f32FromInt(params.weights[1]);
+        const wb = f32FromInt(params.weights[2]);
+        const wa = f32FromInt(params.weights[3]);
+
+        for (pixels[0..num_pixels]) |c| {
+            const d = far * f32FromInt(c[0]) + fag * f32FromInt(c[1]) + fab * f32FromInt(c[2]) + faa * f32FromInt(c[3]);
+
+            const s = clampF(@floor((d - low) * scale + 0.5) * inv_n, 0.0, 1.0);
+
+            const itr = sr + dir * s;
+            const itg = sg + dig * s;
+            const itb = sb + dib * s;
+            const ita = sa + dia * s;
+
+            const dr = itr - f32FromInt(c[0]);
+            const dg = itg - f32FromInt(c[1]);
+            const db = itb - f32FromInt(c[2]);
+            const da = ita - f32FromInt(c[3]);
+
+            if (weighted) {
+                total_errf += wr * dr * dr + wg * dg * dg + wb * db * db + wa * da * da;
+            } else {
+                total_errf += dr * dr + dg * dg + db * db + da * da;
+            }
+        }
+
+        return @bitCast(ftoi64(total_errf));
+    }
+
+    fn estimatePartitionError(mode: u32, params: *const ColorCellCompressorParams, total_subsets: u32, partition: u32, pixels: *const [16]ColorQuadI) u64 {
+        const split = SubsetSplit.init(partitionPattern(total_subsets, partition), pixels);
+        var total_subset_err: u64 = 0;
+        for (0..total_subsets) |subset| {
+            const err = if (mode == 7)
+                colorCellCompressionEstMode7(mode, params, split.total[subset], &split.colors[subset])
+            else
+                colorCellCompressionEst(mode, params, split.total[subset], &split.colors[subset]);
+            total_subset_err +%= err;
+        }
+        return total_subset_err;
+    }
+
+    fn alphaSelectorsAndError(pixels: *const [16]ColorQuadI, vals: []const i32, weight_a: u32, selectors_out: *[16]i32) u64 {
+        var err_total: u64 = 0;
+        for (0..16) |i| {
+            const a = pixels[i][3];
+            var s: i32 = 0;
+            var be = iabs32(a - vals[0]);
+            for (vals[1..], 1..) |v, k| {
+                const e = iabs32(a - v);
+                if (e < be) {
+                    be = e;
+                    s = @intCast(k);
+                }
+            }
+            // u32 arithmetic in the original.
+            err_total += @as(u32, @intCast(be * be)) *% weight_a;
+            selectors_out[i] = s;
+        }
+        return err_total;
+    }
+};
+
+/// Random pixels with runs of repeats and the extremes 0 and 255, which make
+/// flat channels, zero boxes and ties.
+fn testPixels(random: std.Random, out: *[16]ColorQuadI) void {
+    const style = random.uintLessThan(u32, 4);
+    for (out, 0..) |*px, i| {
+        for (px) |*c| {
+            c.* = switch (style) {
+                0 => random.intRangeAtMost(i32, 0, 255),
+                1 => if (random.boolean()) 0 else 255,
+                2 => random.intRangeAtMost(i32, 100, 104),
+                else => if (i > 0 and random.uintLessThan(u32, 3) != 0) out[i - 1][0] else random.intRangeAtMost(i32, 0, 255),
+            };
+        }
+        if (random.uintLessThan(u32, 4) == 0) px[3] = 255;
+    }
+}
+
+test "evaluateSolution on lanes matches the scalar loops" {
+    var prng: std.Random.DefaultPrng = .init(0xbc7e_1a4e);
+    const random = prng.random();
+    var pixels: [16]ColorQuadI = undefined;
+    for (0..20000) |_| {
+        testPixels(random, &pixels);
+        const num_pixels = random.intRangeAtMost(u32, 1, 16);
+
+        var params: ColorCellCompressorParams = .{};
+        switch (random.uintLessThan(u32, 3)) {
+            0 => params.setSelectorWeights(2),
+            1 => params.setSelectorWeights(3),
+            else => params.setSelectorWeights(4),
+        }
+        params.has_pbits = random.boolean();
+        params.endpoints_share_pbit = params.has_pbits and random.boolean();
+        params.comp_bits = random.intRangeAtMost(u32, 4, 7) + @intFromBool(!params.has_pbits);
+        params.has_alpha = random.boolean();
+        params.perceptual = random.boolean();
+        params.weights = if (random.boolean())
+            .{ 128, 64, 16, 256 }
+        else
+            .{ random.intRangeAtMost(u32, 0, 300), random.intRangeAtMost(u32, 0, 300), random.intRangeAtMost(u32, 0, 300), random.intRangeAtMost(u32, 0, 300) };
+
+        const top: i32 = (@as(i32, 1) << @intCast(params.comp_bits)) - 1;
+        var low: ColorQuadI = undefined;
+        var high: ColorQuadI = undefined;
+        for (0..4) |c| {
+            low[c] = random.intRangeAtMost(i32, 0, top);
+            high[c] = if (random.uintLessThan(u32, 4) == 0) low[c] else random.intRangeAtMost(i32, 0, top);
+        }
+        const pbits: [2]u32 = .{ random.uintLessThan(u32, 2), random.uintLessThan(u32, 2) };
+        const prior_err: u64 = if (random.boolean()) std.math.maxInt(u64) else random.uintLessThan(u64, 200000);
+
+        var want_sel: [16]i32 = @splat(-1);
+        var want_tmp: [16]i32 = undefined;
+        var want: ColorCellCompressorResults = .{ .best_overall_err = prior_err, .selectors = &want_sel, .selectors_temp = &want_tmp };
+        var got_sel: [16]i32 = @splat(-1);
+        var got_tmp: [16]i32 = undefined;
+        var got: ColorCellCompressorResults = .{ .best_overall_err = prior_err, .selectors = &got_sel, .selectors_temp = &got_tmp };
+
+        const want_err = scalar_reference.evaluateSolution(&low, &high, &pbits, &params, &want, num_pixels, &pixels);
+        const px = PixelLanes.init(&pixels, num_pixels);
+        const got_err = evaluateSolution(&low, &high, &pbits, &params, &got, &px);
+
+        try std.testing.expectEqual(want_err, got_err);
+        try std.testing.expectEqual(want.best_overall_err, got.best_overall_err);
+        try std.testing.expectEqual(want.low_endpoint, got.low_endpoint);
+        try std.testing.expectEqual(want.high_endpoint, got.high_endpoint);
+        try std.testing.expectEqual(want.pbits, got.pbits);
+        try std.testing.expectEqualSlices(i32, &want_sel, &got_sel);
+        try std.testing.expectEqualSlices(i32, want_tmp[0..num_pixels], got_tmp[0..num_pixels]);
+    }
+}
+
+test "partition estimates on lanes match the scalar loops" {
+    var prng: std.Random.DefaultPrng = .init(0xbc7e_e571);
+    const random = prng.random();
+    var pixels: [16]ColorQuadI = undefined;
+    for (0..3000) |_| {
+        testPixels(random, &pixels);
+        const px = PixelLanes.init(&pixels, lanes);
+        var comp_params = Params.initDefaults(random.boolean());
+        if (random.boolean()) {
+            for (&comp_params.weights) |*w| w.* = random.intRangeAtMost(u32, 0, 300);
+        }
+        if (random.boolean()) {
+            for (&comp_params.alpha_settings.mode67_error_weight_mul) |*w| w.* = random.intRangeAtMost(u32, 0, 4);
+        }
+        for ([_]u32{ 0, 1, 2, 3, 7 }) |mode| {
+            const params = estimateParams(mode, &comp_params);
+            const total_subsets = num_subsets[mode];
+            const total_partitions = @as(u32, 1) << @intCast(partition_bits[mode]);
+            for (0..total_partitions) |partition| {
+                const want = scalar_reference.estimatePartitionError(mode, &params, total_subsets, @intCast(partition), &pixels);
+                const got = estimatePartitionError(mode, &params, total_subsets, @intCast(partition), &px);
+                try std.testing.expectEqual(want, got);
+            }
+        }
+    }
+}
+
+test "alpha selectors on lanes match the scalar loop" {
+    var prng: std.Random.DefaultPrng = .init(0xbc7e_a1fa);
+    const random = prng.random();
+    var pixels: [16]ColorQuadI = undefined;
+    for (0..20000) |_| {
+        testPixels(random, &pixels);
+        var vals_buf: [8]i32 = undefined;
+        const la = random.uintLessThan(u32, 64);
+        const ha = if (random.boolean()) la else random.uintLessThan(u32, 64);
+        const vals = if (random.boolean())
+            mode4AlphaVals(random.uintLessThan(u32, 2), la, ha, &vals_buf)
+        else blk: {
+            vals_buf[0..4].* = mode5AlphaVals(random.uintLessThan(u32, 256), random.uintLessThan(u32, 256));
+            break :blk vals_buf[0..4];
+        };
+        const weight_a = if (random.boolean()) 256 else random.int(u32);
+        var want_sel: [16]i32 = undefined;
+        var got_sel: [16]i32 = undefined;
+        const want = scalar_reference.alphaSelectorsAndError(&pixels, vals, weight_a, &want_sel);
+        const got = alphaSelectorsAndError(&pixels, vals, weight_a, &got_sel);
+        try std.testing.expectEqual(want, got);
+        try std.testing.expectEqualSlices(i32, &want_sel, &got_sel);
+    }
 }
