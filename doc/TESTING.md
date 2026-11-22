@@ -102,7 +102,7 @@ which are its own, against texcomp's decoders.
 
 ### Tests and counts
 
-`zig build test` runs 61 tests: 15 unit tests in `src/` and 46 tests in
+`zig build test` runs 64 tests: 18 unit tests in `src/` and 46 tests in
 `test/`, through `test/differential.zig`. Most of the tests in `test/` are
 oracle tests; the others check round trips within the format's error, the
 format-independent API against the format functions, and the properties of
@@ -120,9 +120,10 @@ partial: 2,688 RGBA and 1,536 HDR blocks. On top of those:
 | --- | --- | --- |
 | BC1, BC3, BC4, BC5 encoders | stb_dxt, and a second build with `STB_DXT_USE_ROUNDING_BIAS` | the image set at every setting; 200,000 crafted blocks (seed `0x5eed`), varying alpha included |
 | BC7 encoder | bc7e | the image set at all 7 levels, perceptual and linear, and 23 setting variants that reach every field of `Params`; 3,000 crafted blocks at every level and setting; single-mode encoding in every mode, partition, rotation and index selector, errors included |
+| BC7 encoder's lane loops | the scalar loops they replace, kept in `src/bc7e.zig` for the tests | 20,000 random palette evaluations over 1 to 16 pixels, every palette size, with and without alpha, p-bits and the perceptual metric (seed `0xbc7e1a4e`); every partition of modes 0 to 3 and 7 on 3,000 random and flat blocks, with random weights (seed `0xbc7ee571`); 20,000 alpha selector searches of modes 4 and 5 (seed `0xbc7ea1fa`) |
 | BC6H encoder | texcomp under its AVX2, SSE4.1 and scalar kernels | the HDR set, both formats; 20,000 fuzz blocks (seed `0xbc6f`) and a corpus of 868 blocks from coverage-guided fuzzing and targeted search (`test/bc6h_corpus.bin`), with every mode encoder called directly, so each mode's block and error estimate are compared whether or not it wins |
 | `floatToHalfBits` | texcomp's `tc_float_to_half_bits` | all 2^32 float bit patterns |
-| BC1, BC3, BC4 decoders | texcomp | random blocks and streams, encoded images, clipping and a wide stride |
+| BC1, BC3, BC4, BC5 decoders | texcomp | random blocks and streams, encoded images, clipping and a wide stride; for BC5, windows of a larger image with 2, 3 and 4 channels |
 | BC5 SNORM decoders | texcomp | every pair of endpoint bytes, -128 included; 50,000 random and edge blocks (seed `0x5b5`); texcomp's SNORM encoding of the image set; windows of a larger image with 2, 3 and 4 channels |
 | BC7 decoder | texcomp | 80,000 random blocks covering every mode (seed `99`), 12,000 encoded blocks, the encoded image set, clipping and a wide stride |
 | BC7 float decoder | texcomp, float bits | 40,000 random blocks in every mode and the reserved one (seed `0xbc7f`), every first byte, encoded blocks and images, windows of RGB and RGBA |

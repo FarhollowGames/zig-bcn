@@ -1225,17 +1225,24 @@ fn selectorWeightLanes(params: *const ColorCellCompressorParams) V {
     unreachable;
 }
 
-/// Entry `idx` of the 16-entry palette from `lo` to `hi`, in every lane:
-/// `floor((lo * (64 - w) + hi * w + 32) / 64)` with w = weights4[idx], the
-/// palette loop's float steps. They give `lo` and `hi` exactly at 0 and 15,
-/// which the loop does not compute. weights4[i] is (64 * i + 7) / 15.
-fn paletteLanes(lo: Vec4F, hi: Vec4F, idx: VI) [4]V {
-    const sw: V = @floatFromInt(@divTrunc(idx * @as(VI, @splat(64)) + @as(VI, @splat(7)), @as(VI, @splat(15))));
+/// The palette entry of weight `sw` (0 to 64) between `lo` and `hi` in each
+/// lane, `floor((lo * (64 - sw) + hi * sw + 32) / 64)` in the original's
+/// float steps. The original computes only the entries between the
+/// endpoints this way and stores the endpoints as they are; with weight 0
+/// and 64 the steps give exactly `lo` and `hi`, which are integers below 256.
+fn paletteEntries(lo: Vec4F, hi: Vec4F, sw: V) [4]V {
     var out: [4]V = undefined;
     inline for (0..4) |c| {
         out[c] = @floor((splatF(lo[c]) * (splatF(64.0) - sw) + splatF(hi[c]) * sw + splatF(32)) * splatF(1.0 / 64.0));
     }
     return out;
+}
+
+/// Entry `idx` of the 16-entry palette in every lane: weights4[i] is
+/// (64 * i + 7) / 15, checked at compile time.
+fn paletteLanes(lo: Vec4F, hi: Vec4F, idx: VI) [4]V {
+    const sw: V = @floatFromInt(@divTrunc(idx * @as(VI, @splat(64)) + @as(VI, @splat(7)), @as(VI, @splat(15))));
+    return paletteEntries(lo, hi, sw);
 }
 
 fn evaluateSolution(
@@ -1270,26 +1277,20 @@ fn evaluateSolution(
 
     const n = params.num_selector_weights;
     assert(n == 4 or n == 8 or n == 16);
-    const nc: u32 = if (params.has_alpha) 4 else 3;
 
     const wr = f32FromInt(params.weights[0]);
     const wg = f32FromInt(params.weights[1]);
     const wb = f32FromInt(params.weights[2]);
     const wa = f32FromInt(params.weights[3]);
 
-    // The palette, entry k in lane k of each channel: the original's loop
-    // over entries 1 to n - 2, run on all 16 lanes. At entry 0 the weight is
-    // 0 and at n - 1 it is 64, which give the endpoints exactly, as the
-    // original stores them. Alpha is read only when nc is 4.
+    // The palette, entry k in lane k of each channel. The original leaves
+    // the alpha of the entries between the endpoints unset without alpha,
+    // and reads it only with alpha.
     const lo = vec4FFromColor(actual_min_color);
     const hi = vec4FFromColor(actual_max_color);
-    const sw = selectorWeightLanes(params);
+    const entries = paletteEntries(lo, hi, selectorWeightLanes(params));
     var palette: [4][lanes]f32 = undefined;
-    inline for (0..4) |c| {
-        const entries: V = @floor((splatF(lo[c]) * (splatF(64.0) - sw) + splatF(hi[c]) * sw + splatF(32)) * splatF(1.0 / 64.0));
-        palette[c] = entries;
-    }
-    _ = nc;
+    inline for (0..4) |c| palette[c] = entries[c];
 
     const num_pixels = px.n;
     var total_errf: f32 = 0;

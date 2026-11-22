@@ -119,7 +119,7 @@ listed in [`STATUS.md`](STATUS.md#left-out-approved). In short:
 
 ## Tests
 
-`zig build test` runs 61 tests: 15 unit tests and 46 tests that build the
+`zig build test` runs 64 tests: 18 unit tests and 46 tests that build the
 originals from `reference/`. Most of the 46 run the original and the port
 on the same inputs and compare every output byte, error measure and flag;
 `bc6h.Quality.high`, which has no original, is checked against what its

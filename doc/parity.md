@@ -36,8 +36,8 @@ values of texcomp's `tc_decode_bc4_block_snorm`, and
 -128 included, each block meeting every palette entry; on 50,000 random
 blocks, a quarter with endpoints at the edges of the signed range and a
 quarter with equal endpoints; on texcomp's SNORM encoding of the 14
-images; and in windows of a larger image with 2, 3 and 4 channels.
-`STATUS.md` lists where these decoders differ from texcomp's.
+images; and in windows of a larger image with 2, 3 and 4 channels, which
+the same test also decodes unsigned. `STATUS.md` lists where these decoders differ from texcomp's.
 `test/encoding_test.zig` checks that every
 encoder gives a window of a larger image, read through its stride, the bytes
 of a packed copy of it, and that BC4 and BC5 read images of fewer channels
@@ -50,6 +50,9 @@ basis_universal v2_50, `encoder/basisu_bc7e_scalar.{h,cpp}`. Ported to
 `bc7.bc7e_api`); `src/bc7.zig` is the public API over it. Tests are in
 `test/bc7_test.zig`, all differential unless noted, and compare every block
 byte, used-LUT flag and returned error.
+The encoder runs its per-pixel loops on vectors of 16 pixels; unit tests in
+`src/bc7e.zig` compare those with the scalar loops they replace, on random
+inputs the image set does not reach.
 
 | original | zig-bcn | test |
 | --- | --- | --- |
