@@ -352,7 +352,12 @@ fn activeLanes(n: u32) VB {
 /// at and past `n` are replaced by +0, which leaves any non-negative sum as
 /// it is, so the loop runs unrolled over all 16.
 fn sumLanes(v: V, n: u32) f32 {
-    const masked = @select(f32, activeLanes(n), v, splatF(0));
+    return sumLanesMasked(v, activeLanes(n));
+}
+
+/// The same over the lanes of `mask`, in lane order.
+fn sumLanesMasked(v: V, mask: VB) f32 {
+    const masked = @select(f32, mask, v, splatF(0));
     var total: f32 = 0;
     inline for (0..lanes) |i| total += masked[i];
     return total;
@@ -369,6 +374,8 @@ const PixelLanes = struct {
     y: V,
     cr: V,
     cb: V,
+    /// The channels as they are, R, G, B and A.
+    ints: [4]VI,
     n: u32,
 
     fn init(pixels: []const ColorQuadI, n: u32) PixelLanes {
@@ -383,7 +390,7 @@ const PixelLanes = struct {
         const b: V = @floatFromInt(@as(VI, c[2]));
         const a: V = @floatFromInt(@as(VI, c[3]));
         const y = r * splatF(0.2126) + g * splatF(0.7152) + b * splatF(0.0722);
-        return .{ .r = r, .g = g, .b = b, .a = a, .y = y, .cr = r - y, .cb = b - y, .n = n };
+        return .{ .r = r, .g = g, .b = b, .a = a, .y = y, .cr = r - y, .cb = b - y, .ints = .{ c[0], c[1], c[2], c[3] }, .n = n };
     }
 };
 
@@ -2055,15 +2062,114 @@ fn partitionPattern(total_subsets: u32, partition: u32) []const u8 {
     return if (total_subsets == 3) partition3[partition * 16 ..][0..16] else partition2[partition * 16 ..][0..16];
 }
 
-fn estimatePartitionError(mode: u32, params: *const ColorCellCompressorParams, total_subsets: u32, partition: u32, pixels: *const [16]ColorQuadI) u64 {
-    const split = SubsetSplit.init(partitionPattern(total_subsets, partition), pixels);
+fn estimatePartitionError(mode: u32, params: *const ColorCellCompressorParams, total_subsets: u32, partition: u32, pixels: *const PixelLanes) u64 {
+    const ids: @Vector(lanes, u8) = partitionPattern(total_subsets, partition)[0..lanes].*;
+    return if (mode == 7)
+        estimateSubsetsError(true, mode, params, total_subsets, ids, pixels)
+    else
+        estimateSubsetsError(false, mode, params, total_subsets, ids, pixels);
+}
+
+/// colorCellCompressionEst (or its mode 7 form, with alpha) for every subset
+/// of a partition at once: each lane takes its own subset's box and
+/// projection, so it holds the scalar code's value for that pixel, and each
+/// subset's error is summed in pixel order as the scalar code does over the
+/// subset's pixels.
+fn estimateSubsetsError(
+    comptime alpha: bool,
+    mode: u32,
+    params: *const ColorCellCompressorParams,
+    total_subsets: u32,
+    ids: @Vector(lanes, u8),
+    px: *const PixelLanes,
+) u64 {
+    assert(px.n == lanes);
+    if (alpha) {
+        assert(mode == 7 and params.num_selector_weights == 4);
+    } else {
+        assert(params.num_selector_weights == 4 or params.num_selector_weights == 8);
+    }
+    const n: u32 = if (alpha) 4 else @as(u32, 1) << @intCast(color_index_bitcount[mode]);
+    const nc = if (alpha) 4 else 3;
+    const chan = [4]V{ px.r, px.g, px.b, px.a };
+
+    const weighted = if (alpha)
+        !params.perceptual and (params.weights[0] != 1 or params.weights[1] != 1 or params.weights[2] != 1 or params.weights[3] != 1)
+    else
+        params.weights[0] != 1 or params.weights[1] != 1 or params.weights[2] != 1;
+
+    // Per lane: the box low corner, the diagonal, and low and scale of the
+    // projection, each taken from the lane's subset.
+    var lo_l: [nc]V = undefined;
+    var dir_l: [nc]V = undefined;
+    var low_l: V = undefined;
+    var scale_l: V = undefined;
+    var masks: [3]VB = undefined;
+
+    for (0..total_subsets) |s| {
+        const m = ids == @as(@Vector(lanes, u8), @splat(@intCast(s)));
+        masks[s] = m;
+        var lo: [nc]f32 = undefined;
+        var hi: [nc]f32 = undefined;
+        inline for (0..nc) |c| {
+            // The scalar loop starts at 255 and 0 and the channels are
+            // integers, so min and max are exact in any order, and in
+            // integers.
+            lo[c] = f32FromInt(@reduce(.Min, @select(i32, m, px.ints[c], @as(VI, @splat(255)))));
+            hi[c] = f32FromInt(@reduce(.Max, @select(i32, m, px.ints[c], @as(VI, @splat(0)))));
+        }
+        var dir: [nc]f32 = undefined;
+        inline for (0..nc) |c| dir[c] = hi[c] - lo[c];
+
+        var low = dir[0] * lo[0] + dir[1] * lo[1] + dir[2] * lo[2];
+        var high = dir[0] * hi[0] + dir[1] * hi[1] + dir[2] * hi[2];
+        if (alpha) {
+            low += dir[3] * lo[3];
+            high += dir[3] * hi[3];
+        }
+        const scale = (f32FromInt(n) - 1) / ((high - low) + denom_bias);
+
+        if (s == 0) {
+            inline for (0..nc) |c| {
+                lo_l[c] = splatF(lo[c]);
+                dir_l[c] = splatF(dir[c]);
+            }
+            low_l = splatF(low);
+            scale_l = splatF(scale);
+        } else {
+            inline for (0..nc) |c| {
+                lo_l[c] = @select(f32, m, splatF(lo[c]), lo_l[c]);
+                dir_l[c] = @select(f32, m, splatF(dir[c]), dir_l[c]);
+            }
+            low_l = @select(f32, m, splatF(low), low_l);
+            scale_l = @select(f32, m, splatF(scale), scale_l);
+        }
+    }
+
+    const inv_n = 1.0 / (f32FromInt(n) - 1);
+
+    var d = dir_l[0] * chan[0] + dir_l[1] * chan[1] + dir_l[2] * chan[2];
+    if (alpha) d += dir_l[3] * chan[3];
+
+    const s = clampV(@floor((d - low_l) * scale_l + splatF(0.5)) * splatF(inv_n), 0.0, 1.0);
+
+    var diff: [nc]V = undefined;
+    inline for (0..nc) |c| diff[c] = (lo_l[c] + dir_l[c] * s) - chan[c];
+
+    var err: V = undefined;
+    if (weighted) {
+        err = errTermV(splatF(f32FromInt(params.weights[0])), diff[0]) +
+            errTermV(splatF(f32FromInt(params.weights[1])), diff[1]) +
+            errTermV(splatF(f32FromInt(params.weights[2])), diff[2]);
+        if (alpha) err += errTermV(splatF(f32FromInt(params.weights[3])), diff[3]);
+    } else {
+        err = diff[0] * diff[0] + diff[1] * diff[1] + diff[2] * diff[2];
+        if (alpha) err += diff[3] * diff[3];
+    }
+
     var total_subset_err: u64 = 0;
-    for (0..total_subsets) |subset| {
-        const err = if (mode == 7)
-            colorCellCompressionEstMode7(mode, params, split.total[subset], &split.colors[subset])
-        else
-            colorCellCompressionEst(mode, params, split.total[subset], &split.colors[subset]);
-        total_subset_err +%= err;
+    for (masks[0..total_subsets]) |m| {
+        total_subset_err +%= @bitCast(ftoi64(sumLanesMasked(err, m)));
     }
     return total_subset_err;
 }
@@ -2078,10 +2184,11 @@ fn estimatePartition(mode: u32, pixels: *const [16]ColorQuadI, comp_params: *con
     var best_partition: u32 = 0;
 
     const params = estimateParams(mode, comp_params);
+    const px = PixelLanes.init(pixels, lanes);
 
     for (0..total_partitions) |partition_usize| {
         const partition: u32 = @intCast(partition_usize);
-        const total_subset_err = estimatePartitionError(mode, &params, total_subsets, partition, pixels);
+        const total_subset_err = estimatePartitionError(mode, &params, total_subsets, partition, &px);
 
         if (total_subset_err < best_err) {
             best_err = total_subset_err;
@@ -2125,12 +2232,13 @@ fn estimatePartitionList(mode: u32, pixels: *const [16]ColorQuadI, comp_params: 
     assert(max_solutions >= 1 and max_solutions <= @as(i32, @intCast(solutions.len)));
 
     const params = estimateParams(mode, comp_params);
+    const px = PixelLanes.init(pixels, lanes);
 
     var num_solutions: i32 = 0;
 
     for (0..total_partitions) |partition_usize| {
         const partition: u32 = @intCast(partition_usize);
-        const total_subset_err = estimatePartitionError(mode, &params, total_subsets, partition, pixels);
+        const total_subset_err = estimatePartitionError(mode, &params, total_subsets, partition, &px);
 
         // Insertion into the sorted list, dropping the last when full.
         var i: i32 = 0;
