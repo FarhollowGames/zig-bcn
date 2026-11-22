@@ -1212,6 +1212,19 @@ fn errTermV(w: V, d: V) V {
     return w * d * d;
 }
 
+/// The selector weights as floats, entry k in lane k, and 0 past them.
+fn selectorWeightLanes(params: *const ColorCellCompressorParams) V {
+    inline for (.{ &weights2, &weights3, &weights4 }) |w| {
+        if (params.num_selector_weights == w.len) {
+            assert(params.selector_weights.ptr == w);
+            comptime var out: [lanes]f32 = @splat(0);
+            inline for (w, 0..) |x, i| out[i] = x;
+            return out;
+        }
+    }
+    unreachable;
+}
+
 /// Entry `idx` of the 16-entry palette from `lo` to `hi`, in every lane:
 /// `floor((lo * (64 - w) + hi * w + 32) / 64)` with w = weights4[idx], the
 /// palette loop's float steps. They give `lo` and `hi` exactly at 0 and 15,
@@ -1264,18 +1277,19 @@ fn evaluateSolution(
     const wb = f32FromInt(params.weights[2]);
     const wa = f32FromInt(params.weights[3]);
 
-    // Entries 1..n-2 get only nc channels; the alpha of those is read only
-    // when nc is 4.
-    var weighted_colors: [16][4]f32 = undefined;
-    weighted_colors[0] = vec4FFromColor(actual_min_color);
-    weighted_colors[n - 1] = vec4FFromColor(actual_max_color);
-
-    for (1..n - 1) |i| {
-        for (0..nc) |j| {
-            const sw = f32FromInt(params.selector_weights[i]);
-            weighted_colors[i][j] = @floor((weighted_colors[0][j] * (64.0 - sw) + weighted_colors[n - 1][j] * sw + 32) * (1.0 / 64.0));
-        }
+    // The palette, entry k in lane k of each channel: the original's loop
+    // over entries 1 to n - 2, run on all 16 lanes. At entry 0 the weight is
+    // 0 and at n - 1 it is 64, which give the endpoints exactly, as the
+    // original stores them. Alpha is read only when nc is 4.
+    const lo = vec4FFromColor(actual_min_color);
+    const hi = vec4FFromColor(actual_max_color);
+    const sw = selectorWeightLanes(params);
+    var palette: [4][lanes]f32 = undefined;
+    inline for (0..4) |c| {
+        const entries: V = @floor((splatF(lo[c]) * (splatF(64.0) - sw) + splatF(hi[c]) * sw + splatF(32)) * splatF(1.0 / 64.0));
+        palette[c] = entries;
     }
+    _ = nc;
 
     const num_pixels = px.n;
     var total_errf: f32 = 0;
@@ -1289,8 +1303,6 @@ fn evaluateSolution(
         const has_alpha = params.has_alpha;
 
         if (n == 16) {
-            const lo = vec4FFromColor(actual_min_color);
-            const hi = vec4FFromColor(actual_max_color);
             const dr = hi[0] - lo[0];
             const dg = hi[1] - lo[1];
             const db = hi[2] - lo[2];
@@ -1317,8 +1329,8 @@ fn evaluateSolution(
             // The palette entries the two candidates pick, computed in each
             // lane from its index as the palette loop above computes them.
             assert(params.selector_weights.ptr == &weights4);
-            const p0 = paletteLanes(weighted_colors[0], weighted_colors[15], idx0);
-            const p1 = paletteLanes(weighted_colors[0], weighted_colors[15], idx1);
+            const p0 = paletteLanes(lo, hi, idx0);
+            const p1 = paletteLanes(lo, hi, idx1);
 
             var e0 = err3V(vwr, vwg, vwb, p0[0] - px.r, p0[1] - px.g, p0[2] - px.b);
             var e1 = err3V(vwr, vwg, vwb, p1[0] - px.r, p1[1] - px.g, p1[2] - px.b);
@@ -1332,9 +1344,8 @@ fn evaluateSolution(
         } else {
             var e: [8]V = undefined;
             for (0..n) |k| {
-                const w = weighted_colors[k];
-                e[k] = err3V(vwr, vwg, vwb, splatF(w[0]) - px.r, splatF(w[1]) - px.g, splatF(w[2]) - px.b);
-                if (has_alpha) e[k] += errTermV(vwa, splatF(w[3]) - px.a);
+                e[k] = err3V(vwr, vwg, vwb, splatF(palette[0][k]) - px.r, splatF(palette[1][k]) - px.g, splatF(palette[2][k]) - px.b);
+                if (has_alpha) e[k] += errTermV(vwa, splatF(palette[3][k]) - px.a);
             }
 
             var best_err = minV(minV(minV(e[0], e[1]), e[2]), e[3]);
@@ -1353,6 +1364,14 @@ fn evaluateSolution(
         const vwb = splatF(wb * pb_weight);
         const vwa = splatF(wa);
 
+        // The palette's luma and chroma, entry k in lane k.
+        const pr: V = palette[0];
+        const pb: V = palette[2];
+        const y_v = pr * splatF(0.2126) + @as(V, palette[1]) * splatF(0.7152) + pb * splatF(0.0722);
+        const pal_y: [lanes]f32 = y_v;
+        const pal_cr: [lanes]f32 = pr - y_v;
+        const pal_cb: [lanes]f32 = pb - y_v;
+
         var best_err = splatF(1e+10);
         sel = @splat(0);
         // Two copies of the loop, as in the original, so the alpha test is
@@ -1360,14 +1379,12 @@ fn evaluateSolution(
         inline for (.{ false, true }) |has_alpha| {
             if (params.has_alpha == has_alpha) {
                 for (0..n) |j| {
-                    const w = weighted_colors[j];
-                    const wy = w[0] * 0.2126 + w[1] * 0.7152 + w[2] * 0.0722;
-                    const dl = px.y - splatF(wy);
-                    const dcr = px.cr - splatF(w[0] - wy);
-                    const dcb = px.cb - splatF(w[2] - wy);
+                    const dl = px.y - splatF(pal_y[j]);
+                    const dcr = px.cr - splatF(pal_cr[j]);
+                    const dcb = px.cb - splatF(pal_cb[j]);
                     var err = err3V(vwr, vwg, vwb, dl, dcr, dcb);
                     if (has_alpha) {
-                        const da = px.a - splatF(w[3]);
+                        const da = px.a - splatF(palette[3][j]);
                         err += errTermV(vwa, da);
                     }
                     const better = err < best_err;
