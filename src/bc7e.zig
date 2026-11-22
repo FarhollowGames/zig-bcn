@@ -2456,23 +2456,21 @@ fn encodeBc7BlockMode6(block: *[16]u8, results: *const Bc7OptimizationResults) v
 /// Alpha levels for mode 4 and 5 searches: vals[0] and vals[last] are the
 /// endpoints, the others interpolate.
 fn alphaSelectorsAndError(pixels: *const [16]ColorQuadI, vals: []const i32, weight_a: u32, selectors_out: *[16]i32) u64 {
-    var err_total: u64 = 0;
-    for (0..16) |i| {
-        const a = pixels[i][3];
-        var s: i32 = 0;
-        var be = iabs32(a - vals[0]);
-        for (vals[1..], 1..) |v, k| {
-            const e = iabs32(a - v);
-            if (e < be) {
-                be = e;
-                s = @intCast(k);
-            }
-        }
-        // u32 arithmetic in the original.
-        err_total += @as(u32, @intCast(be * be)) *% weight_a;
-        selectors_out[i] = s;
+    var alpha: VI = undefined;
+    inline for (0..lanes) |i| alpha[i] = pixels[i][3];
+    // Alpha and the palette are 0 to 255, so the differences never overflow.
+    var s: VI = @splat(0);
+    var be: VI = @intCast(@abs(alpha - @as(VI, @splat(vals[0]))));
+    for (vals[1..], 1..) |v, k| {
+        const e: VI = @intCast(@abs(alpha - @as(VI, @splat(v))));
+        const better = e < be;
+        be = @select(i32, better, e, be);
+        s = @select(i32, better, @as(VI, @splat(@intCast(k))), s);
     }
-    return err_total;
+    selectors_out.* = s;
+    // u32 arithmetic in the original; the u64 sum is exact in any order.
+    const terms = @as(@Vector(lanes, u32), @intCast(be * be)) *% @as(@Vector(lanes, u32), @splat(weight_a));
+    return @reduce(.Add, @as(@Vector(lanes, u64), terms));
 }
 
 fn mode4AlphaVals(index_selector: u32, la: u32, ha: u32, vals: *[8]i32) []const i32 {
