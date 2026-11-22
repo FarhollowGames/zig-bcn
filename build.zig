@@ -121,6 +121,14 @@ fn addBench(b: *std.Build, target: std.Build.ResolvedTarget) void {
         }),
     });
     bench.root_module.linkLibrary(reference);
+    // Optional: bc7e's ISPC build, from objects the caller compiled (see
+    // doc/BENCHMARKS.md), for rows that compare with it. It is not in
+    // reference/ and not an oracle: its fast-math output differs.
+    const ispc_objects = b.option([]const []const u8, "bc7e-ispc", "An object file of bc7e.ispc to benchmark against; repeat for each (optional)") orelse &.{};
+    const bench_options = b.addOptions();
+    bench_options.addOption(bool, "bc7e_ispc", ispc_objects.len > 0);
+    bench.root_module.addOptions("bench_options", bench_options);
+    for (ispc_objects) |path| bench.root_module.addObjectFile(.{ .cwd_relative = path });
     const run = b.addRunArtifact(bench);
     run.addPassthruArgs();
     bench_step.dependOn(&run.step);

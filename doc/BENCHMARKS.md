@@ -136,10 +136,14 @@ did change: its alpha is a BC4 block.
   original's float steps in its order, and the sums across pixels stay
   scalar and in pixel order, so the bytes are the same; unit tests compare
   each vector loop with the scalar loop it replaced.
-- **bc7e's ISPC build is not measured.** It is bc7e's fast build: the
-  same search run across SIMD lanes, typically several times faster than
-  the scalar build. These rows say nothing about how zig-bcn compares with
-  it.
+- **bc7e's ISPC build is faster than zig-bcn** at every level: zig-bcn
+  takes 1.06 to 1.61 times as long as it with bc7e's own build flags, and
+  1.67 to 2.39 times as long as an AVX-512 build of it (see "BC7 against
+  bc7e's ISPC build" below). The ISPC build runs the search on several
+  blocks at once, one block to a lane, so every step of the search is on
+  vectors, including the parts that are scalar in zig-bcn. zig-bcn keeps
+  one block at a time and the scalar C++ build's exact float steps, which
+  is what lets it be checked byte for byte.
 - **What is not faster.** The rest of the BC7 search is still the scalar
   translation: the principal-axis fit, the least squares refinement and the
   endpoint quantization, whose sums over pixels must keep their order. In a
@@ -189,6 +193,54 @@ did change: its alpha is a BC4 block.
 - **`bc6h encode high`** has no original. [`bc6h-quality.md`](bc6h-quality.md)
   compares its quality and speed with texcomp and with Microsoft's
   DirectXTex on HDR photographs and the test images, on the same machine.
+
+## BC7 against bc7e's ISPC build
+
+bc7e's fast build is `bc7e.ispc`, compiled with Intel's ISPC; the scalar
+C++ above is basis_universal's translation of it. This comparison is not
+part of the default `zig build bench`. The ISPC source is
+[richgel999/bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo) at
+commit `b943862`, compiled with ISPC 1.25.3 and the flags of that
+repository's `CMakeLists.txt`:
+
+```sh
+ispc -O2 bc7e.ispc -o bc7e.o -h bc7e_ispc.h --target=sse2,sse4,avx,avx2 \
+    --opt=fast-math --opt=disable-assertions --pic
+zig build bench -Dbc7e-ispc=bc7e.o -Dbc7e-ispc=bc7e_sse2.o -Dbc7e-ispc=bc7e_sse4.o \
+    -Dbc7e-ispc=bc7e_avx.o -Dbc7e-ispc=bc7e_avx2.o -- --filter ispc --rounds 3
+```
+
+ISPC picks its AVX2 code at run time on this machine. The last two columns
+are one run of a build with `--target=avx512skx-x16` instead, which bc7e's
+own build does not use. The ISPC build takes its parameters from its own
+`bc7e_compress_block_params_init_*` functions; they are the port's, except
+that it has no `use_luts` switch and always uses the tables.
+
+| feature | zig-bcn Mpix/s | bc7e ISPC Mpix/s | time ratio | time ratio, range of 3 runs | bc7e ISPC AVX-512 Mpix/s | time ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| bc7 encode ultrafast | 10.53 | 13.43 | 1.28 | 1.0% | 17.37 | 1.65 |
+| bc7 encode veryfast | 2.89 | 4.64 | 1.61 | 1.4% | 6.73 | 2.34 |
+| bc7 encode fast | 2.87 | 4.60 | 1.60 | 2.9% | 6.70 | 2.33 |
+| bc7 encode basic | 2.06 | 3.10 | 1.50 | 1.0% | 4.34 | 2.11 |
+| bc7 encode basic linear | 1.00 | 1.42 | 1.42 | 1.1% | 1.93 | 1.91 |
+| bc7 encode slow | 1.55 | 2.20 | 1.42 | 1.4% | 3.73 | 2.39 |
+| bc7 encode veryslow | 0.46 | 0.53 | 1.15 | 2.2% | 0.85 | 1.89 |
+| bc7 encode slowest | 0.36 | 0.38 | 1.06 | 2.7% | 0.60 | 1.67 |
+
+Time ratio is zig-bcn's time over the ISPC build's: above 1, zig-bcn is
+slower. Same machine, method and image set as above, three runs of
+`--rounds 3` for the AVX2 columns, at commit `ee3b0c1`, whose encoder code
+is that of `5862a52`.
+
+The bytes differ, since the ISPC build uses fast math, but it does the
+same search: on the image set, at `ultrafast`, `basic` and `slowest`, both
+metrics, 86% to 95% of the blocks are identical and the RGBA PSNR of the
+two encoders' output is equal to within 0.001 dB.
+
+The gap is smallest at `veryslow` and `slowest` and largest at `veryfast`
+to `slow`; the cause was not profiled. Against bc7e's scalar C++ build, measured above, the
+ISPC build is 2.1 to 2.4 times as fast here; the scalar build is compiled
+for this CPU at `-O3`, so clang vectorizes some of its loops too.
 
 ## Other CPU targets
 

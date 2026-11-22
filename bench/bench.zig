@@ -21,6 +21,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const bcn = @import("bcn");
 const images = @import("images");
+const bench_options = @import("bench_options");
 
 extern fn stb_compress_dxt_block(dest: [*]u8, src: [*]const u8, alpha: c_int, mode: c_int) void;
 extern fn stb_compress_dxt_block_bias(
@@ -39,6 +40,17 @@ extern fn ref_bc7e_compress_blocks(
     params: *const anyopaque,
     used_lut: ?[*]u8,
 ) void;
+// bc7e's ISPC build, linked only with -Dbc7e-ispc (build.zig). Its params
+// have the scalar port's layout, so they are filled into a bcn Params.
+extern fn bc7e_compress_blocks(num_blocks: u32, blocks: [*]u64, pixels: [*]const u32, params: *const anyopaque) void;
+extern fn bc7e_compress_block_init() void;
+extern fn bc7e_compress_block_params_init_ultrafast(p: *anyopaque, perceptual: bool) void;
+extern fn bc7e_compress_block_params_init_veryfast(p: *anyopaque, perceptual: bool) void;
+extern fn bc7e_compress_block_params_init_fast(p: *anyopaque, perceptual: bool) void;
+extern fn bc7e_compress_block_params_init_basic(p: *anyopaque, perceptual: bool) void;
+extern fn bc7e_compress_block_params_init_slow(p: *anyopaque, perceptual: bool) void;
+extern fn bc7e_compress_block_params_init_veryslow(p: *anyopaque, perceptual: bool) void;
+extern fn bc7e_compress_block_params_init_slowest(p: *anyopaque, perceptual: bool) void;
 extern fn ref_bc6h_block(is_signed: c_int, pix: *const [16][3]f32, out: *[16]u8) void;
 extern fn tc_backend_force_mask(mask: u32) void;
 extern fn tc_backend_name() [*:0]const u8;
@@ -221,6 +233,29 @@ fn bc7Bc7e(case: *const Case, in: *const Inputs, out: []align(64) u8) void {
     const blocks: [*]u64 = @ptrCast(out.ptr);
     const pixels: [*]const u32 = @ptrCast(in.rgba.ptr);
     ref_bc7e_compress_blocks(@intCast(in.rgba.len), blocks, pixels, &params, null);
+}
+
+fn ispcParams(level: bcn.bc7.Level, perceptual: bool) bcn.bc7.Params {
+    var p: bcn.bc7.Params = std.mem.zeroes(bcn.bc7.Params);
+    switch (level) {
+        .ultrafast => bc7e_compress_block_params_init_ultrafast(&p, perceptual),
+        .veryfast => bc7e_compress_block_params_init_veryfast(&p, perceptual),
+        .fast => bc7e_compress_block_params_init_fast(&p, perceptual),
+        .basic => bc7e_compress_block_params_init_basic(&p, perceptual),
+        .slow => bc7e_compress_block_params_init_slow(&p, perceptual),
+        .veryslow => bc7e_compress_block_params_init_veryslow(&p, perceptual),
+        .slowest => bc7e_compress_block_params_init_slowest(&p, perceptual),
+    }
+    return p;
+}
+
+/// bc7e's ISPC build, with its own params for the level, set up per pass as
+/// the other sides' are.
+fn bc7Ispc(case: *const Case, in: *const Inputs, out: []align(64) u8) void {
+    const params = ispcParams(case.level, case.perceptual);
+    const blocks: [*]u64 = @ptrCast(out.ptr);
+    const pixels: [*]const u32 = @ptrCast(in.rgba.ptr);
+    bc7e_compress_blocks(@intCast(in.rgba.len), blocks, pixels, &params);
 }
 
 fn bc6hZig(case: *const Case, in: *const Inputs, out: []align(64) u8) void {
@@ -426,9 +461,26 @@ fn bc7Case(comptime name: []const u8, level: bcn.bc7.Level, perceptual: bool) Ca
     return ldrCase("bc7 encode " ++ name, 16, bc7Zig, bc7Bc7e, v);
 }
 
+fn bc7IspcCase(comptime name: []const u8, level: bcn.bc7.Level, perceptual: bool) Case {
+    const v: Variant = .{ .level = level, .perceptual = perceptual };
+    return ldrCase("bc7 encode " ++ name ++ ", bc7e ispc", 16, bc7Zig, bc7Ispc, v);
+}
+
+/// With -Dbc7e-ispc only: the BC7 rows against bc7e's ISPC build.
+const ispc_cases = if (bench_options.bc7e_ispc) [_]Case{
+    bc7IspcCase("ultrafast", .ultrafast, true),
+    bc7IspcCase("veryfast", .veryfast, true),
+    bc7IspcCase("fast", .fast, true),
+    bc7IspcCase("basic", .basic, true),
+    bc7IspcCase("basic linear", .basic, false),
+    bc7IspcCase("slow", .slow, true),
+    bc7IspcCase("veryslow", .veryslow, true),
+    bc7IspcCase("slowest", .slowest, true),
+} else [_]Case{};
+
 const signed_format: Variant = .{ .format = .signed };
 
-const cases = [_]Case{
+const cases = ispc_cases ++ [_]Case{
     ldrCase("bc1 encode normal", 8, bc1Zig, bc1Stb, .{}),
     ldrCase("bc1 encode high", 8, bc1Zig, bc1Stb, .{ .stb = .{ .quality = .high } }),
     ldrCase("bc1 encode normal biased", 8, bc1Zig, bc1Stb, .{ .stb = .{ .rounding = .biased } }),
@@ -689,6 +741,7 @@ pub fn main(init: std.process.Init) !void {
     const options = try parseOptions(try init.minimal.args.toSlice(gpa));
 
     ref_bc7e_init();
+    if (bench_options.bc7e_ispc) bc7e_compress_block_init();
     const in = try prepare(gpa);
     var out_len_max: usize = 0;
     for (cases) |c| out_len_max = @max(out_len_max, c.out_len);
