@@ -143,7 +143,9 @@ image set:
 | BC7 decode | 0.61 | 39% faster |
 | BC6H decode, unsigned | 0.67 | 33% faster |
 
-The BC7 encoder is faster than bc7e at every level, by 24% to 48%.
+The BC7 encoder is faster than bc7e's scalar C++ build at every level, by
+24% to 48%, built for the CPU it runs on; less on older vector sets (see
+`doc/BENCHMARKS.md`).
 
 An Intel Xeon (Granite Rapids) cloud VM with 4 virtual CPUs, one thread,
 Linux 6.18, Zig 0.17.0 ReleaseFast against Zig's clang `-O3`, at commit

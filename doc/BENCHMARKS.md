@@ -122,12 +122,15 @@ from the after runs; it moved by under 5% between them.
 | bc6h decode unsigned | 336.72 | 332.60 | 222.17 | 0.65 | 0.67 |
 | bc6h decode signed | 283.77 | 284.27 | 139.31 | 0.55 | 0.49 |
 
-Rows that this pass did not touch moved within the runs' noise. BC3 decode
-also changed: its alpha is a BC4 block.
+Rows this pass did not touch moved by up to about a tenth between the
+before and after runs, which is this VM's noise between runs. BC3 decode
+did change: its alpha is a BC4 block.
 
 ## Notes and known biases
 
-- **BC7 encoding** is faster than bc7e at every level on this machine,
+- **BC7 encoding** is faster than bc7e's scalar C++ build (the one
+  vendored here; bc7e's ISPC build is not measured) at every level on this
+  machine,
   time ratio 0.52 to 0.76. Before this pass it was 1.14 to 1.31 here. The
   per-pixel loops run on vectors of the block's 16 pixels: the palette
   evaluation, the partition estimate (every subset of a partition in one
@@ -135,16 +138,20 @@ also changed: its alpha is a BC4 block.
   float steps in its order, and the sums across pixels stay scalar and in
   pixel order, so the bytes are the same; unit tests compare each vector
   loop with the scalar loop it replaced.
-- **Still slower, or no faster.** The rest of the BC7 search is the scalar
-  translation and runs at about bc7e's speed: the principal-axis fit, the
-  least squares refinement and the endpoint quantization, whose sums over
-  pixels must keep their order. `basic linear` gains least (0.76): its
+- **What is not faster.** The rest of the BC7 search is still the scalar
+  translation: the principal-axis fit, the least squares refinement and the
+  endpoint quantization, whose sums over pixels must keep their order. In a
+  profile of `basic` these take as long as bc7e's counterparts or longer,
+  up to about twice as long for the endpoint quantization; inlining differs
+  between the two builds, so the per-function figures are rough. `basic linear` gains least (0.76): its
   mode 6 search tries only two palette entries per pixel, where the
   perceptual search tries every entry, so there is less per-pixel work for
   the vectors to take over. No row of `zig build
   bench` is slower than its original on this machine.
 - **BC7 with bc7e's default float flags.** With clang's default
-  `-ffp-contract=on`, which fuses multiply-adds and changes bc7e's bytes,
+  `-ffp-contract=on`, which fuses multiply-adds and changes bc7e's bytes
+  (measured by adding `"-ffp-contract=on"` after `"-O3"` in `addBench` in
+  `build.zig`),
   bc7e's BC7 rows moved by 5% or less, some up and some down; zig-bcn
   stayed 1.34 to 1.91 times as fast.
 - **BC5 decoding** was slower than texcomp's on this machine before this
@@ -152,9 +159,9 @@ also changed: its alpha is a BC4 block.
   pixel's two bytes went through a `[16][2]u8` array that LLVM assembled
   byte by byte in general registers. Whole blocks are now stored a row at
   a time from the lanes, and the BC4 palette divides in 16-bit lanes; the
-  ratios are 0.94 and 0.47. BC5 decode remains the closest decoder row:
-  texcomp writes all four bytes of a pixel at once, and zig-bcn reads and
-  writes back blue and alpha to leave them as they were.
+  ratios are below. BC5 decode remains the closest decoder row: texcomp
+  writes all four bytes of a pixel at once, and zig-bcn writes only red
+  and green, two bytes at a time, so that it never touches blue and alpha.
 - **BC5 encoding** measured 0.98 of stb_dxt's throughput on the Ryzen; on
   this machine it measures 1.47, the same as BC4, so the Ryzen figure
   looks like that machine's, not the code's. It was not re-measured there.
