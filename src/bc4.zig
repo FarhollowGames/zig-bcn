@@ -33,7 +33,10 @@ pub fn decodeBlockSnorm(block: *const [block_bytes]u8) [16]i8 {
     return signedEntries(5, index, v0, v1);
 }
 
-const Lanes = @Vector(16, u32);
+/// Unsigned entries need 11 bits: (n - w) * v0 + w * v1 + n / 2 is at most
+/// 7 * 255 + 3. 16-bit lanes divide by the constant n with one high multiply
+/// each; 32-bit lanes need 64-bit products.
+const Lanes = @Vector(16, u16);
 /// Signed entries need 11 bits: (n - w) * v0 + w * v1 is at most 7 * 128.
 const SignedLanes = @Vector(16, i16);
 
@@ -46,22 +49,22 @@ fn indices(block: *const [block_bytes]u8) Lanes {
 
 /// The weight of v1, out of `n`, in each lane's palette entry. Entry 1 is
 /// v1 at full weight; entry k > 1 gives v1 the weight k - 1.
-fn v1Weights(comptime n: u32, index: Lanes) Lanes {
+fn v1Weights(comptime n: u16, index: Lanes) Lanes {
     const one: Lanes = @splat(1);
     const top: Lanes = @splat(n);
-    return @min(@select(u32, index == one, top, index -| one), top);
+    return @min(@select(u16, index == one, top, index -| one), top);
 }
 
 /// Palette entries: v0, v1, then `n - 1` values between them, each
 /// ((n - w) * v0 + w * v1 + n / 2) / n for v1's weight w. The 6-entry
 /// palette (n = 5) ends with 0 and 255.
-fn entries(comptime n: u32, index: Lanes, v0: Lanes, v1: Lanes) [16]u8 {
+fn entries(comptime n: u16, index: Lanes, v0: Lanes, v1: Lanes) [16]u8 {
     const top: Lanes = @splat(n);
     const w = v1Weights(n, index);
     var value = ((top - w) * v0 + w * v1 + @as(Lanes, @splat(n / 2))) / top;
     if (n == 5) {
-        value = @select(u32, index == @as(Lanes, @splat(6)), @as(Lanes, @splat(0)), value);
-        value = @select(u32, index == @as(Lanes, @splat(7)), @as(Lanes, @splat(255)), value);
+        value = @select(u16, index == @as(Lanes, @splat(6)), @as(Lanes, @splat(0)), value);
+        value = @select(u16, index == @as(Lanes, @splat(7)), @as(Lanes, @splat(255)), value);
     }
     return @as(@Vector(16, u8), @intCast(value));
 }

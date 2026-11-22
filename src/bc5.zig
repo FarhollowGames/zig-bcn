@@ -50,10 +50,10 @@ const alternate = mask: {
 /// texcomp computes it in `f32`, which gives the same bytes: the one half,
 /// at s = 0, is exact in `f32`, and every other value lies at least 1 / 254
 /// from a half.
-fn unormFromSnorm(s: @Vector(32, i8)) @Vector(32, u8) {
-    const Wide = @Vector(32, u16);
-    const signed: @Vector(32, i16) = @intCast(s);
-    const from_zero: Wide = @intCast(signed + @as(@Vector(32, i16), @splat(127)));
+fn unormFromSnorm(s: @Vector(16, i8)) @Vector(16, u8) {
+    const Wide = @Vector(16, u16);
+    const signed: @Vector(16, i16) = @intCast(s);
+    const from_zero: Wide = @intCast(signed + @as(@Vector(16, i16), @splat(127)));
     const sum = from_zero * @as(Wide, @splat(255)) + @as(Wide, @splat(127));
     return @intCast(sum / @as(Wide, @splat(254)));
 }
@@ -86,10 +86,58 @@ pub fn decodeImageRows(src: []const u8, dst: image.ImageMut(u8), rows: image.Blo
     assert(dst.channels >= 2);
     image.decodeBlocks(block_bytes, dst.width, dst.height, src, rows, dst, struct {
         fn f(out: image.ImageMut(u8), block: *const [block_bytes]u8, bx: u32, by: u32) void {
-            out.putBlock(2, bx, by, &decodeBlock(block));
+            putRedGreen(out, bx, by, bc4.decodeBlock(block[0..8]), bc4.decodeBlock(block[8..16]));
         }
     }.f);
 }
+
+/// Writes a block's red and green lanes into channels 0 and 1 of `out`,
+/// leaving the other channels as they were. A block wholly inside an image
+/// of 2 or 4 channels is written a row of 4 pixels at a time, from the
+/// lanes; any other goes through `putBlock`.
+fn putRedGreen(out: image.ImageMut(u8), bx: u32, by: u32, r: @Vector(16, u8), g: @Vector(16, u8)) void {
+    const inside = (bx + 1) * 4 <= out.width and (by + 1) * 4 <= out.height;
+    if (inside and (out.channels == 2 or out.channels == 4)) {
+        inline for (0..4) |yy| {
+            const at = @as(usize, by * 4 + yy) * out.stride + @as(usize, bx) * 4 * out.channels;
+            if (out.channels == 2) {
+                out.pixels[at..][0..8].* = @shuffle(u8, r, g, rowPairs(yy));
+            } else {
+                const row = out.pixels[at..][0..16];
+                const pairs: @Vector(16, u8) = @shuffle(u8, r, g, rowQuads(yy));
+                row.* = @select(u8, red_green_of_rgba, pairs, @as(@Vector(16, u8), row.*));
+            }
+        }
+        return;
+    }
+    const pairs: [32]u8 = @shuffle(u8, r, g, alternate);
+    out.putBlock(2, bx, by, @ptrCast(&pairs));
+}
+
+/// Row `yy` of the block as pixels of two channels: r, g, r, g and so on.
+fn rowPairs(comptime yy: usize) [8]i32 {
+    var m: [8]i32 = undefined;
+    for (0..4) |x| {
+        m[2 * x] = yy * 4 + x;
+        m[2 * x + 1] = ~@as(i32, yy * 4 + x);
+    }
+    return m;
+}
+
+/// Row `yy` of the block in the red and green bytes of four-channel pixels;
+/// the blue and alpha lanes repeat red and green and are not stored.
+fn rowQuads(comptime yy: usize) [16]i32 {
+    var m: [16]i32 = undefined;
+    for (0..4) |x| {
+        m[4 * x] = yy * 4 + x;
+        m[4 * x + 1] = ~@as(i32, yy * 4 + x);
+        m[4 * x + 2] = yy * 4 + x;
+        m[4 * x + 3] = ~@as(i32, yy * 4 + x);
+    }
+    return m;
+}
+
+const red_green_of_rgba: @Vector(16, bool) = .{ true, true, false, false, true, true, false, false, true, true, false, false, true, true, false, false };
 
 /// Decodes signed blocks (BC5_SNORM) into channels 0 and 1 of `dst`, as
 /// bytes in the usual normal-map convention, where a byte u stands for
@@ -109,10 +157,9 @@ pub fn decodeImageSnormRows(
     assert(dst.channels >= 2);
     image.decodeBlocks(block_bytes, dst.width, dst.height, src, rows, dst, struct {
         fn f(out: image.ImageMut(u8), block: *const [block_bytes]u8, bx: u32, by: u32) void {
-            const signed: [32]i8 = @bitCast(decodeBlockSnorm(block));
-            const unorm: [32]u8 = unormFromSnorm(signed);
-            const bytes: [16][2]u8 = @bitCast(unorm);
-            out.putBlock(2, bx, by, &bytes);
+            const r = unormFromSnorm(bc4.decodeBlockSnorm(block[0..8]));
+            const g = unormFromSnorm(bc4.decodeBlockSnorm(block[8..16]));
+            putRedGreen(out, bx, by, r, g);
         }
     }.f);
 }
