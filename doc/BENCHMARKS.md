@@ -229,7 +229,7 @@ that it has no `use_luts` switch and always uses the tables.
 
 Time ratio is zig-bcn's time over the ISPC build's: above 1, zig-bcn is
 slower. Same machine, method and image set as above, three runs of
-`--rounds 3` for the AVX2 columns, at commit `ee3b0c1`, whose encoder code
+`--rounds 3` for the AVX2 columns, at commit `031d30f`, whose encoder code
 is that of `5862a52`.
 
 The bytes differ, since the ISPC build uses fast math, but it does the

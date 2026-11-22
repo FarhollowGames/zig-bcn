@@ -116,8 +116,6 @@ fn putRedGreen(out: image.ImageMut(u8), bx: u32, by: u32, r: @Vector(16, u8), g:
     out.putBlock(2, bx, by, @ptrCast(&pairs));
 }
 
-
-
 /// Decodes signed blocks (BC5_SNORM) into channels 0 and 1 of `dst`, as
 /// bytes in the usual normal-map convention, where a byte u stands for
 /// 2 * u / 255 - 1: -127 gives 0, 0 gives 128 and 127 gives 255. Other
