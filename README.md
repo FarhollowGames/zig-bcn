@@ -120,10 +120,11 @@ listed in [`STATUS.md`](STATUS.md#left-out-approved). In short:
 ## Tests
 
 `zig build test` runs 68 tests: 18 unit tests and 50 tests that build the
-originals from `reference/`. Most of the 46 run the original and the port
+originals from `reference/`. Most of the 50 run the original and the port
 on the same inputs and compare every output byte, error measure and flag;
 `bc6h.Quality.high`, which has no original, is checked against what its
-blocks decode to.
+blocks decode to, and recorded digests check that every machine writes the
+same bytes.
 
 - [`doc/TESTING.md`](doc/TESTING.md): how the tests compare the port with
   the originals, and what this repository's tests cover.
