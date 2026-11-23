@@ -153,8 +153,8 @@ These are ReleaseFast builds for the CPU they run on, on an Intel Xeon
 (Granite Rapids) cloud VM with 4 virtual CPUs, one thread, Linux 6.18, Zig
 0.17.0, against Zig's clang `-O3` and, for bc7e's ISPC build, ISPC 1.25.3
 with bc7e's own flags; each row is from the run with the median time ratio
-of three, at commit `d64ab48` (the ISPC row at `031d30f`, with the same
-encoder code). Earlier figures were from a Ryzen 9 9950X3D and are not
+of three, at `perf/bc7-encode` commit `d64ab48`, squashed into v0.3.3
+(the ISPC row at `031d30f`, with the same encoder code). Earlier figures were from a Ryzen 9 9950X3D and are not
 comparable.
 
 zig-bcn has no run-time CPU dispatch: it runs the code of the CPU it was

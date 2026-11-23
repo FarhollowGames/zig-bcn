@@ -41,6 +41,11 @@ AVX-512), 4 virtual CPUs under KVM, Linux 6.18, Zig 0.17.0, at commit
 `d64ab48`, on 23 November 2026. The one-minute load average was 1.0 to 1.3
 during the runs.
 
+Commits named in this file other than `73673bf` (v0.3.2) are on the
+`perf/bc7-encode` branch, which was squashed into v0.3.3; their encoder
+code for native x86-64 builds is v0.3.3's except where a note says
+otherwise.
+
 The figures of v0.3.2, measured on an AMD Ryzen 9 9950X3D at commit
 `3ee9b14`, are in this file's history up to commit `73673bf`. That machine
 was not available for this pass, so the tables below are from the VM, and
