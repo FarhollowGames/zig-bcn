@@ -339,6 +339,18 @@ fn maxV(a: V, b: V) V {
     return @select(f32, a > b, a, b);
 }
 
+/// @floor on lanes. x86 without SSE4.1 has no vector floor, and LLVM calls
+/// floorf once per lane; there the lanes go through i32, which is exact
+/// for the bounded, never -0 values the callers pass.
+fn floorV(x: V) V {
+    const builtin = @import("builtin");
+    if (comptime builtin.cpu.arch == .x86_64 and !std.Target.x86.featureSetHas(builtin.cpu.features, .sse4_1)) {
+        const t: V = @floatFromInt(@as(VI, @intFromFloat(x)));
+        return t - @select(f32, t > x, splatF(1), splatF(0));
+    }
+    return @floor(x);
+}
+
 fn clampV(v: V, lo: f32, hi: f32) V {
     return minV(maxV(v, splatF(lo)), splatF(hi));
 }
@@ -1235,7 +1247,7 @@ fn selectorWeightLanes(params: *const ColorCellCompressorParams) V {
 fn paletteEntries(lo: Vec4F, hi: Vec4F, sw: V) [4]V {
     var out: [4]V = undefined;
     inline for (0..4) |c| {
-        out[c] = @floor((splatF(lo[c]) * (splatF(64.0) - sw) + splatF(hi[c]) * sw + splatF(32)) * splatF(1.0 / 64.0));
+        out[c] = floorV((splatF(lo[c]) * (splatF(64.0) - sw) + splatF(hi[c]) * sw + splatF(32)) * splatF(1.0 / 64.0));
     }
     return out;
 }
@@ -1323,7 +1335,7 @@ fn evaluateSolution(
 
             var dot = (px.r * splatF(dr) + splatF(lr)) + (px.g * splatF(dg) + splatF(lg)) + (px.b * splatF(db) + splatF(lb));
             if (has_alpha) dot += px.a * splatF(da) + splatF(la);
-            const best_sel = clampV(@floor(dot * splatF(f) + splatF(0.5)), 1, f32FromInt(n - 1));
+            const best_sel = clampV(floorV(dot * splatF(f) + splatF(0.5)), 1, f32FromInt(n - 1));
             const best_sel0 = best_sel - splatF(1);
             // In 1 to 15 after the clamp, NaN included, so the casts are exact.
             const idx1: VI = @intFromFloat(best_sel);
@@ -2038,7 +2050,7 @@ fn estimateSubsetsError(
     var d = dir_l[0] * chan[0] + dir_l[1] * chan[1] + dir_l[2] * chan[2];
     if (alpha) d += dir_l[3] * chan[3];
 
-    const s = clampV(@floor((d - low_l) * scale_l + splatF(0.5)) * splatF(inv_n), 0.0, 1.0);
+    const s = clampV(floorV((d - low_l) * scale_l + splatF(0.5)) * splatF(inv_n), 0.0, 1.0);
 
     var diff: [nc]V = undefined;
     inline for (0..nc) |c| diff[c] = (lo_l[c] + dir_l[c] * s) - chan[c];
@@ -3707,12 +3719,26 @@ fn testWeight(random: std.Random) u32 {
     return if (random.boolean()) random.intRangeAtMost(u32, 0, 300) else random.int(u32);
 }
 
+/// The generator of a lane test whose recorded seed is `base`, offset by
+/// `zig build test -Dfuzz-seed=N` as every fuzz test's is. The option module
+/// exists only in the test build, and only these tests reference it.
+fn testPrng(base: u64) std.Random.DefaultPrng {
+    return .init(base ^ @import("bcn_test_options").fuzz_seed);
+}
+
+fn printFailure(name: []const u8, iteration: usize, pixels: *const [16]ColorQuadI) void {
+    std.debug.print("\n{s}: iteration {d} differs (-Dfuzz-seed={d})\n  pixels {any}\n", .{
+        name, iteration, @import("bcn_test_options").fuzz_seed, pixels.*,
+    });
+}
+
 test "evaluateSolution on lanes matches the scalar loops" {
-    var prng: std.Random.DefaultPrng = .init(0xbc7e_1a4e);
+    var prng = testPrng(0xbc7e_1a4e);
     const random = prng.random();
     var pixels: [16]ColorQuadI = undefined;
-    for (0..20000) |_| {
+    for (0..20000) |iteration| {
         testPixels(random, &pixels);
+        errdefer printFailure("evaluateSolution", iteration, &pixels);
         const num_pixels = random.intRangeAtMost(u32, 1, 16);
 
         var params: ColorCellCompressorParams = .{};
@@ -3763,11 +3789,12 @@ test "evaluateSolution on lanes matches the scalar loops" {
 }
 
 test "partition estimates on lanes match the scalar loops" {
-    var prng: std.Random.DefaultPrng = .init(0xbc7e_e571);
+    var prng = testPrng(0xbc7e_e571);
     const random = prng.random();
     var pixels: [16]ColorQuadI = undefined;
-    for (0..3000) |_| {
+    for (0..3000) |iteration| {
         testPixels(random, &pixels);
+        errdefer printFailure("partition estimate", iteration, &pixels);
         const px = PixelLanes.init(&pixels, lanes);
         var comp_params = Params.initDefaults(random.boolean());
         if (random.boolean()) {
@@ -3790,11 +3817,12 @@ test "partition estimates on lanes match the scalar loops" {
 }
 
 test "alpha selectors on lanes match the scalar loop" {
-    var prng: std.Random.DefaultPrng = .init(0xbc7e_a1fa);
+    var prng = testPrng(0xbc7e_a1fa);
     const random = prng.random();
     var pixels: [16]ColorQuadI = undefined;
-    for (0..20000) |_| {
+    for (0..20000) |iteration| {
         testPixels(random, &pixels);
+        errdefer printFailure("alpha selectors", iteration, &pixels);
         var vals_buf: [8]i32 = undefined;
         const la = random.uintLessThan(u32, 64);
         const ha = if (random.boolean()) la else random.uintLessThan(u32, 64);

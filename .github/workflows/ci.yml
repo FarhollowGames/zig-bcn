@@ -7,7 +7,20 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Loomwork ships on x86-64 Windows and Linux, servers included.
+          - os: ubuntu-latest
+            cpu: ""
+          - os: windows-latest
+            cpu: ""
+          # The CPU any cross-compiled x86-64 build gets without -Dcpu:
+          # no SSE4.1, so the vector code takes its other paths.
+          - os: ubuntu-latest
+            cpu: -Dcpu=baseline
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: mlugg/setup-zig@v2
@@ -15,5 +28,5 @@ jobs:
           version: 0.17.0
       - name: Formatting
         run: zig fmt --check build.zig src test tools
-      - name: Differential and unit tests
-        run: zig build test --summary all
+      - name: Differential, unit and recorded-digest tests
+        run: zig build test ${{ matrix.cpu }} --summary all

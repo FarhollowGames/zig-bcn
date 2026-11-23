@@ -11,6 +11,7 @@ comptime {
     _ = @import("bc7_test.zig");
     _ = @import("bc6h_test.zig");
     _ = @import("bc6h_high_test.zig");
+    _ = @import("golden_test.zig");
     // Under `zig build coverage` the reference is instrumented; referencing
     // this symbol keeps the profile runtime's exit hook, which writes the
     // counts.

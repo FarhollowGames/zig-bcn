@@ -25,6 +25,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = test_optimize,
     });
+    // Read only by the unit tests in src/: the fuzz seed offset.
+    const bcn_test_options = b.addOptions();
+    bcn_test_options.addOption(u64, "fuzz_seed", fuzz_seed);
+    bcn_test_mod.addOptions("bcn_test_options", bcn_test_options);
 
     const test_step = b.step("test", "Run unit and differential tests");
 

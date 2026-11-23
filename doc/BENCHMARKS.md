@@ -204,11 +204,16 @@ commit `b943862`, compiled with ISPC 1.25.3 and the flags of that
 repository's `CMakeLists.txt`:
 
 ```sh
+# in a directory outside this repository, with bc7e.ispc in it
 ispc -O2 bc7e.ispc -o bc7e.o -h bc7e_ispc.h --target=sse2,sse4,avx,avx2 \
     --opt=fast-math --opt=disable-assertions --pic
-zig build bench -Dbc7e-ispc=bc7e.o -Dbc7e-ispc=bc7e_sse2.o -Dbc7e-ispc=bc7e_sse4.o \
-    -Dbc7e-ispc=bc7e_avx.o -Dbc7e-ispc=bc7e_avx2.o -- --filter ispc --rounds 3
+# back in this repository; $ISPC_OUT is that directory
+zig build bench -Dbc7e-ispc=$ISPC_OUT/bc7e.o -Dbc7e-ispc=$ISPC_OUT/bc7e_sse2.o \
+    -Dbc7e-ispc=$ISPC_OUT/bc7e_sse4.o -Dbc7e-ispc=$ISPC_OUT/bc7e_avx.o \
+    -Dbc7e-ispc=$ISPC_OUT/bc7e_avx2.o -- --filter ispc --rounds 3
 ```
+
+These rows print "bytes not compared": the ISPC build is not an oracle.
 
 ISPC picks its AVX2 code at run time on this machine. The last two columns
 are one run of a build with `--target=avx512skx-x16` instead, which bc7e's
@@ -234,8 +239,10 @@ is that of `5862a52`.
 
 The bytes differ, since the ISPC build uses fast math, but it does the
 same search: on the image set, at `ultrafast`, `basic` and `slowest`, both
-metrics, 86% to 95% of the blocks are identical and the RGBA PSNR of the
-two encoders' output is equal to within 0.001 dB.
+metrics, 86% to 95% of the blocks are identical. The two encoders' RGBA
+PSNR is equal to within 0.001 dB, at 19 to 21 dB: the image set is made to
+be hard (noise, hue stripes, extremes), so this says they do the same
+work, not how good either is on real textures.
 
 The gap is smallest at `veryslow` and `slowest` and largest at `veryfast`
 to `slow`; the cause was not profiled. Against bc7e's scalar C++ build, measured above, the

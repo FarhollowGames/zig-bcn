@@ -173,6 +173,8 @@ const Case = struct {
     kernels: u32 = kernels_scalar,
     /// Bytes the Zig side never writes start as the original writes them.
     rgba_fill: bool = false,
+    /// False where the other side is not an oracle and writes other bytes.
+    compare: bool = true,
 };
 
 // --- Encoders -------------------------------------------------------------------
@@ -463,7 +465,10 @@ fn bc7Case(comptime name: []const u8, level: bcn.bc7.Level, perceptual: bool) Ca
 
 fn bc7IspcCase(comptime name: []const u8, level: bcn.bc7.Level, perceptual: bool) Case {
     const v: Variant = .{ .level = level, .perceptual = perceptual };
-    return ldrCase("bc7 encode " ++ name ++ ", bc7e ispc", 16, bc7Zig, bc7Ispc, v);
+    var c = ldrCase("bc7 encode " ++ name ++ ", bc7e ispc", 16, bc7Zig, bc7Ispc, v);
+    // Its fast-math search picks other blocks now and then.
+    c.compare = false;
+    return c;
 }
 
 /// With -Dbc7e-ispc only: the BC7 rows against bc7e's ISPC build.
@@ -614,7 +619,7 @@ fn measure(
             }
         }
     }
-    const same = case.original == null or std.mem.eql(u8, zig_out, original_out);
+    const same = case.original == null or !case.compare or std.mem.eql(u8, zig_out, original_out);
     return .{
         .zig = Timing.of(zig_ns),
         .original = if (case.original != null) Timing.of(original_ns) else null,
@@ -795,6 +800,7 @@ pub fn main(init: std.process.Init) !void {
         } else {
             try w.print(" no original | | |", .{});
         }
+        if (!case.compare) try w.print(" bytes not compared", .{});
         if (!result.same_bytes) try w.print(" OUTPUT DIFFERS", .{});
         try w.print("\n", .{});
     }
