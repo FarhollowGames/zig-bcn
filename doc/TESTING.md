@@ -102,7 +102,7 @@ which are its own, against texcomp's decoders.
 
 ### Tests and counts
 
-`zig build test` runs 64 tests: 18 unit tests in `src/` and 46 tests in
+`zig build test` runs 68 tests: 18 unit tests in `src/` and 50 tests in
 `test/`, through `test/differential.zig`. Most of the tests in `test/` are
 oracle tests; the others check round trips within the format's error, the
 format-independent API against the format functions, and the properties of
@@ -130,6 +130,7 @@ partial: 2,688 RGBA and 1,536 HDR blocks. On top of those:
 | BC6H decoder, half bits and floats | texcomp | every encoded image, 200,000 random blocks of both formats (seed `0x6c6`), every window size from 1 x 1 to 9 x 9, strips and padded rows |
 | `bc6h.Quality.high` | no original | every block decodes, in texcomp's decoder and zig-bcn's, to exactly the error the encoder reported, and never above `.fast`'s, on the HDR set, 4,000 fuzz blocks (seed `0xb6`) and the corpus; every flat colour is stored exactly; every mode's fields pack and decode back; its float-to-half conversion is IEEE round to nearest even on all 2^32 floats |
 | `bcn.Encoding`, row bands, threads | the format functions | the same bytes in bands and on threads; windows of a larger image like a packed copy; fewer channels like the same pixels in RGBA |
+| every encoder and decoder, across machines | SHA-256 digests recorded in `test/golden_test.zig`, the bytes of v0.3.2 | BC7 at all 7 levels and both metrics on the image set (RGBA and RGB) and on 3,000 random blocks with random settings (seed `0x7e57`); BC1 to BC5 and BC6H on the image sets; every decoder on 20 random streams (seed `0xdec0`), into images of 1 to 4 channels whose other bytes must stay as they were. Fixed seeds, not `-Dfuzz-seed`. CI runs the tests on x86-64 Linux, x86-64 Windows and baseline x86-64 |
 
 Float outputs (`decodeImageF32`, `decodeBlockF32`) are compared as bytes,
 so as bit patterns; the HDR set puts infinities and NaN through the BC6H

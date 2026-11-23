@@ -24,12 +24,12 @@ and branch of the translated code.
 | `#define STB_DXT_GENERATE_TABLES` (table generator program) | `generateOMatch` in `src/stb_dxt.zig` | regenerates both single-colour tables and compares them with the embedded ones |
 | `STB_DXT_STATIC`, `STBD_FABS`, `STB_DXT_IMPLEMENTATION` | not applicable: C linkage and libm configuration | |
 
-Added in zig-bcn, beyond stb_dxt: whole-image `encodeImage` for each format
-(edge blocks repeat the last row and column), and decoders for BC1, BC3, BC4
-and BC5 (block and image), checked byte for byte against texcomp's decoders
-on random blocks and streams. BC4 and BC5 also decode signed (SNORM)
-blocks: `bc4.decodeBlockSnorm` and `bc5.decodeBlockSnorm` give the `i8`
-values of texcomp's `tc_decode_bc4_block_snorm`, and
+Added in zig-bcn, beyond stb_dxt: whole-image `encodeImage` for each
+format (edge blocks repeat the last row and column), and decoders for BC1,
+BC3, BC4 and BC5 (block and image), checked byte for byte against
+texcomp's decoders on random blocks and streams. BC4 and BC5 also decode
+signed (SNORM) blocks: `bc4.decodeBlockSnorm` and `bc5.decodeBlockSnorm`
+give the `i8` values of texcomp's `tc_decode_bc4_block_snorm`, and
 `bc5.decodeImageSnorm` the bytes of `tc_bc5_decompress_rgba8` with
 `snorm = 1` (red and green; texcomp also writes blue 0 and alpha 255).
 `test/bc5_snorm_test.zig` compares them on every pair of endpoint bytes,
@@ -37,11 +37,11 @@ values of texcomp's `tc_decode_bc4_block_snorm`, and
 blocks, a quarter with endpoints at the edges of the signed range and a
 quarter with equal endpoints; on texcomp's SNORM encoding of the 14
 images; and in windows of a larger image with 2, 3 and 4 channels, which
-the same test also decodes unsigned. `STATUS.md` lists where these decoders differ from texcomp's.
-`test/encoding_test.zig` checks that every
-encoder gives a window of a larger image, read through its stride, the bytes
-of a packed copy of it, and that BC4 and BC5 read images of fewer channels
-like the same pixels in RGBA.
+the same test also decodes unsigned. `STATUS.md` lists where these
+decoders differ from texcomp's. `test/encoding_test.zig` checks that every
+encoder gives a window of a larger image, read through its stride, the
+bytes of a packed copy of it, and that BC4 and BC5 read images of fewer
+channels like the same pixels in RGBA.
 
 ## basisu_bc7e_scalar (BC7)
 

@@ -38,8 +38,8 @@ zig build bench -- --filter decode --rounds 3   # one group of rows
 
 An Intel Xeon cloud VM (Granite Rapids; Zig's CPU name `graniterapids`,
 AVX-512), 4 virtual CPUs under KVM, Linux 6.18, Zig 0.17.0, at commit
-`5862a52`, on 22 November 2026. The one-minute load average was 1.0 to 1.3
-during the runs (2.2 at the start of the first, just after a build).
+`d64ab48`, on 23 November 2026. The one-minute load average was 1.0 to 1.3
+during the runs.
 
 The figures of v0.3.2, measured on an AMD Ryzen 9 9950X3D at commit
 `3ee9b14`, are in this file's history up to commit `73673bf`. That machine
@@ -50,77 +50,77 @@ the two machines' figures should not be mixed.
 
 | feature | zig-bcn Mpix/s | range | original Mpix/s | range | throughput, zig-bcn / original | time, zig-bcn / original | time ratio, range of 3 runs |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| bc1 encode normal | 76.04 | 37.0% | 73.53 | 23.2% | 1.03 | 0.97 | 0.5% |
-| bc1 encode high | 67.25 | 1.6% | 62.28 | 0.7% | 1.08 | 0.93 | 1.9% |
-| bc1 encode normal biased | 74.24 | 2.0% | 71.95 | 0.8% | 1.03 | 0.97 | 0.7% |
-| bc3 encode normal | 59.28 | 16.5% | 55.79 | 6.9% | 1.06 | 0.94 | 0.3% |
-| bc3 encode high | 54.74 | 2.5% | 48.92 | 1.5% | 1.12 | 0.89 | 0.9% |
-| bc4 encode | 356.27 | 15.9% | 241.73 | 10.8% | 1.47 | 0.68 | 0.3% |
-| bc5 encode | 171.35 | 0.6% | 118.40 | 1.4% | 1.45 | 0.69 | 0.3% |
-| bc7 encode ultrafast | 10.45 | 1.2% | 6.42 | 0.9% | 1.63 | 0.61 | 0.3% |
-| bc7 encode veryfast | 2.87 | 1.3% | 1.92 | 15.0% | 1.49 | 0.67 | 0.7% |
-| bc7 encode fast | 2.86 | 14.9% | 1.91 | 12.2% | 1.50 | 0.67 | 1.2% |
-| bc7 encode basic | 2.06 | 3.1% | 1.30 | 2.4% | 1.58 | 0.63 | 0.5% |
-| bc7 encode basic linear | 1.00 | 2.0% | 0.76 | 5.8% | 1.32 | 0.76 | 0.0% |
-| bc7 encode slow | 1.56 | 8.5% | 0.96 | 22.5% | 1.63 | 0.62 | 0.6% |
-| bc7 encode veryslow | 0.46 | 12.4% | 0.25 | 13.5% | 1.84 | 0.54 | 4.0% |
-| bc7 encode slowest | 0.36 | 9.6% | 0.19 | 56.7% | 1.89 | 0.53 | 0.0% |
-| bc6h encode unsigned | 2.50 | 3.7% | 1.97 | 0.7% | 1.27 | 0.79 | 0.0% |
-| bc6h encode signed | 1.76 | 6.3% | 1.50 | 41.1% | 1.17 | 0.85 | 1.8% |
-| bc6h encode unsigned, texcomp simd | 2.51 | 2.1% | 2.05 | 1.4% | 1.22 | 0.82 | 0.5% |
-| bc6h encode signed, texcomp simd | 1.79 | 1.9% | 1.60 | 19.9% | 1.12 | 0.89 | 1.2% |
-| bc6h encode high unsigned | 0.39 | 1.4% | no original | | | | |
-| bc6h encode high signed | 0.36 | 3.6% | no original | | | | |
-| bc1 decode | 1117.20 | 6.7% | 848.27 | 27.7% | 1.32 | 0.76 | 7.2% |
-| bc3 decode | 808.08 | 4.5% | 608.19 | 4.6% | 1.33 | 0.75 | 6.1% |
-| bc4 decode | 4784.53 | 0.4% | 2525.53 | 3.1% | 1.89 | 0.53 | 0.3% |
-| bc5 decode | 859.48 | 0.5% | 793.51 | 1.2% | 1.08 | 0.92 | 1.2% |
-| bc5 decode snorm | 768.37 | 0.7% | 353.59 | 0.6% | 2.17 | 0.46 | 0.6% |
-| bc7 decode | 296.31 | 0.3% | 181.17 | 0.4% | 1.64 | 0.61 | 1.1% |
-| bc7 decode f32 | 295.07 | 3.0% | 160.25 | 1.4% | 1.84 | 0.54 | 0.5% |
-| bc6h decode unsigned | 331.72 | 1.7% | 217.31 | 1.9% | 1.53 | 0.66 | 0.7% |
-| bc6h decode signed | 283.60 | 0.7% | 156.64 | 4.4% | 1.81 | 0.55 | 3.6% |
+| bc1 encode normal | 76.55 | 3.0% | 75.27 | 3.0% | 1.02 | 0.98 | 3.2% |
+| bc1 encode high | 69.97 | 11.7% | 63.95 | 7.0% | 1.09 | 0.91 | 1.6% |
+| bc1 encode normal biased | 75.01 | 2.7% | 72.60 | 3.8% | 1.03 | 0.97 | 0.4% |
+| bc3 encode normal | 59.13 | 1.2% | 55.46 | 0.9% | 1.07 | 0.94 | 2.4% |
+| bc3 encode high | 55.72 | 10.4% | 49.87 | 5.7% | 1.12 | 0.90 | 1.4% |
+| bc4 encode | 356.37 | 5.3% | 243.30 | 5.9% | 1.46 | 0.68 | 1.7% |
+| bc5 encode | 175.86 | 5.2% | 120.93 | 4.1% | 1.45 | 0.69 | 0.8% |
+| bc7 encode ultrafast | 10.55 | 2.5% | 6.42 | 1.9% | 1.64 | 0.61 | 0.8% |
+| bc7 encode veryfast | 2.95 | 1.9% | 1.96 | 3.6% | 1.51 | 0.66 | 5.2% |
+| bc7 encode fast | 2.88 | 5.9% | 1.91 | 4.0% | 1.51 | 0.66 | 4.2% |
+| bc7 encode basic | 2.06 | 0.2% | 1.29 | 0.5% | 1.60 | 0.63 | 2.7% |
+| bc7 encode basic linear | 1.01 | 4.7% | 0.76 | 5.7% | 1.33 | 0.75 | 1.0% |
+| bc7 encode slow | 1.63 | 5.7% | 0.99 | 0.6% | 1.65 | 0.61 | 2.8% |
+| bc7 encode veryslow | 0.46 | 15.9% | 0.24 | 7.6% | 1.92 | 0.52 | 0.2% |
+| bc7 encode slowest | 0.36 | 4.5% | 0.18 | 1.9% | 2.00 | 0.50 | 2.7% |
+| bc6h encode unsigned | 2.51 | 2.2% | 1.96 | 1.9% | 1.28 | 0.78 | 2.4% |
+| bc6h encode signed | 1.82 | 7.7% | 1.56 | 7.4% | 1.17 | 0.86 | 2.8% |
+| bc6h encode unsigned, texcomp simd | 2.52 | 3.8% | 2.05 | 0.7% | 1.23 | 0.81 | 1.2% |
+| bc6h encode signed, texcomp simd | 1.80 | 3.9% | 1.63 | 10.8% | 1.10 | 0.91 | 1.6% |
+| bc6h encode high unsigned | 0.39 | 2.6% | no original | | | | |
+| bc6h encode high signed | 0.36 | 11.8% | no original | | | | |
+| bc1 decode | 1171.55 | 2.6% | 857.09 | 6.6% | 1.37 | 0.73 | 2.2% |
+| bc3 decode | 829.34 | 4.8% | 596.95 | 3.7% | 1.39 | 0.72 | 0.9% |
+| bc4 decode | 4932.33 | 2.1% | 2594.21 | 2.2% | 1.90 | 0.53 | 1.2% |
+| bc5 decode | 882.25 | 3.8% | 814.66 | 4.2% | 1.08 | 0.92 | 2.1% |
+| bc5 decode snorm | 767.14 | 3.4% | 354.19 | 3.3% | 2.17 | 0.46 | 1.2% |
+| bc7 decode | 297.94 | 29.9% | 180.24 | 20.3% | 1.65 | 0.60 | 1.6% |
+| bc7 decode f32 | 292.06 | 0.9% | 159.62 | 0.6% | 1.83 | 0.55 | 1.7% |
+| bc6h decode unsigned | 347.86 | 9.1% | 229.76 | 6.4% | 1.51 | 0.66 | 0.8% |
+| bc6h decode signed | 285.10 | 0.9% | 142.74 | 3.2% | 2.00 | 0.50 | 1.8% |
 
 ## BC7 speed pass: before and after
 
 Both binaries built the same way on the same machine: v0.3.2 (commit
-`73673bf`) and this pass (commit `5862a52`), with the same originals. The
+`73673bf`) and this pass (commit `d64ab48`), with the same originals. The
 before and after runs alternated, three of each with `--rounds 3`; each row
 is from the run with the median time ratio. The original's throughput is
 from the after runs; it moved by under 5% between them.
 
 | feature | before, zig-bcn Mpix/s | after, zig-bcn Mpix/s | original Mpix/s | time ratio before | time ratio after |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| bc1 encode normal | 76.29 | 76.04 | 73.53 | 0.96 | 0.97 |
-| bc1 encode high | 69.91 | 67.25 | 62.28 | 0.91 | 0.93 |
-| bc1 encode normal biased | 74.67 | 74.24 | 71.95 | 0.96 | 0.97 |
-| bc3 encode normal | 59.21 | 59.28 | 55.79 | 0.94 | 0.94 |
-| bc3 encode high | 54.57 | 54.74 | 48.92 | 0.90 | 0.89 |
-| bc4 encode | 355.61 | 356.27 | 241.73 | 0.68 | 0.68 |
-| bc5 encode | 172.38 | 171.35 | 118.40 | 0.68 | 0.69 |
-| bc7 encode ultrafast | 5.48 | 10.45 | 6.42 | 1.19 | 0.61 |
-| bc7 encode veryfast | 1.56 | 2.87 | 1.92 | 1.23 | 0.67 |
-| bc7 encode fast | 1.57 | 2.86 | 1.91 | 1.24 | 0.67 |
-| bc7 encode basic | 1.04 | 2.06 | 1.30 | 1.25 | 0.63 |
-| bc7 encode basic linear | 0.58 | 1.00 | 0.76 | 1.31 | 0.76 |
-| bc7 encode slow | 0.79 | 1.56 | 0.96 | 1.22 | 0.62 |
-| bc7 encode veryslow | 0.21 | 0.46 | 0.25 | 1.14 | 0.54 |
-| bc7 encode slowest | 0.16 | 0.36 | 0.19 | 1.19 | 0.53 |
-| bc6h encode unsigned | 2.51 | 2.50 | 1.97 | 0.78 | 0.79 |
-| bc6h encode signed | 1.82 | 1.76 | 1.50 | 0.85 | 0.85 |
-| bc6h encode unsigned, texcomp simd | 2.50 | 2.51 | 2.05 | 0.82 | 0.82 |
-| bc6h encode signed, texcomp simd | 1.81 | 1.79 | 1.60 | 0.91 | 0.89 |
-| bc6h encode high unsigned | 0.39 | 0.39 | no original | | |
+| bc1 encode normal | 78.34 | 76.55 | 75.27 | 0.97 | 0.98 |
+| bc1 encode high | 67.93 | 69.97 | 63.95 | 0.92 | 0.91 |
+| bc1 encode normal biased | 75.35 | 75.01 | 72.60 | 0.97 | 0.97 |
+| bc3 encode normal | 59.97 | 59.13 | 55.46 | 0.93 | 0.94 |
+| bc3 encode high | 54.75 | 55.72 | 49.87 | 0.91 | 0.90 |
+| bc4 encode | 355.52 | 356.37 | 243.30 | 0.68 | 0.68 |
+| bc5 encode | 180.03 | 175.86 | 120.93 | 0.69 | 0.69 |
+| bc7 encode ultrafast | 5.39 | 10.55 | 6.42 | 1.19 | 0.61 |
+| bc7 encode veryfast | 1.59 | 2.95 | 1.96 | 1.22 | 0.66 |
+| bc7 encode fast | 1.57 | 2.88 | 1.91 | 1.22 | 0.66 |
+| bc7 encode basic | 1.06 | 2.06 | 1.29 | 1.25 | 0.63 |
+| bc7 encode basic linear | 0.59 | 1.01 | 0.76 | 1.31 | 0.75 |
+| bc7 encode slow | 0.79 | 1.63 | 0.99 | 1.22 | 0.61 |
+| bc7 encode veryslow | 0.21 | 0.46 | 0.24 | 1.14 | 0.52 |
+| bc7 encode slowest | 0.16 | 0.36 | 0.18 | 1.19 | 0.50 |
+| bc6h encode unsigned | 2.55 | 2.51 | 1.96 | 0.79 | 0.78 |
+| bc6h encode signed | 1.81 | 1.82 | 1.56 | 0.85 | 0.86 |
+| bc6h encode unsigned, texcomp simd | 2.56 | 2.52 | 2.05 | 0.82 | 0.81 |
+| bc6h encode signed, texcomp simd | 1.79 | 1.80 | 1.63 | 0.90 | 0.91 |
+| bc6h encode high unsigned | 0.40 | 0.39 | no original | | |
 | bc6h encode high signed | 0.36 | 0.36 | no original | | |
-| bc1 decode | 1127.11 | 1117.20 | 848.27 | 0.78 | 0.76 |
-| bc3 decode | 725.29 | 808.08 | 608.19 | 0.85 | 0.75 |
-| bc4 decode | 3486.73 | 4784.53 | 2525.53 | 0.72 | 0.53 |
-| bc5 decode | 612.30 | 859.48 | 793.51 | 1.30 | 0.92 |
-| bc5 decode snorm | 293.20 | 768.37 | 353.59 | 1.21 | 0.46 |
-| bc7 decode | 295.86 | 296.31 | 181.17 | 0.61 | 0.61 |
-| bc7 decode f32 | 296.41 | 295.07 | 160.25 | 0.54 | 0.54 |
-| bc6h decode unsigned | 340.78 | 331.72 | 217.31 | 0.66 | 0.66 |
-| bc6h decode signed | 284.28 | 283.60 | 156.64 | 0.55 | 0.55 |
+| bc1 decode | 1120.23 | 1171.55 | 857.09 | 0.78 | 0.73 |
+| bc3 decode | 760.83 | 829.34 | 596.95 | 0.83 | 0.72 |
+| bc4 decode | 3488.67 | 4932.33 | 2594.21 | 0.72 | 0.53 |
+| bc5 decode | 612.14 | 882.25 | 814.66 | 1.30 | 0.92 |
+| bc5 decode snorm | 293.65 | 767.14 | 354.19 | 1.21 | 0.46 |
+| bc7 decode | 296.60 | 297.94 | 180.24 | 0.61 | 0.60 |
+| bc7 decode f32 | 303.74 | 292.06 | 159.62 | 0.54 | 0.55 |
+| bc6h decode unsigned | 332.31 | 347.86 | 229.76 | 0.66 | 0.66 |
+| bc6h decode signed | 289.85 | 285.10 | 142.74 | 0.55 | 0.50 |
 
 Rows this pass did not touch moved by up to about a tenth between the
 before and after runs, which is this VM's noise between runs. BC3 decode
@@ -129,13 +129,14 @@ did change: its alpha is a BC4 block.
 ## Notes and known biases
 
 - **BC7 encoding** is faster than bc7e's scalar C++ build, the one
-  vendored here, at every level on this machine, time ratio 0.53 to 0.76. Before this pass it was 1.14 to 1.31
-  here. The per-pixel loops run on vectors of the block's 16 pixels: the
-  palette evaluation, the partition estimate (every subset of a partition
-  in one pass) and the mode 4 and 5 alpha search. Each lane does the
-  original's float steps in its order, and the sums across pixels stay
-  scalar and in pixel order, so the bytes are the same; unit tests compare
-  each vector loop with the scalar loop it replaced.
+  vendored here, at every level on this machine, time ratio 0.50 to 0.75.
+  Before this pass it was 1.14 to 1.31 here. The per-pixel loops run on
+  vectors of the block's 16 pixels: the palette evaluation, the partition
+  estimate (every subset of a partition in one pass) and the mode 4 and 5
+  alpha search. Each lane does the original's float steps in its order,
+  and the sums across pixels stay scalar and in pixel order, so the bytes
+  are the same; unit tests compare each vector loop with the scalar loop
+  it replaced.
 - **bc7e's ISPC build is faster than zig-bcn** at every level: zig-bcn
   takes 1.06 to 1.61 times as long as it with bc7e's own build flags, and
   1.67 to 2.39 times as long as an AVX-512 build of it (see "BC7 against
@@ -252,25 +253,52 @@ for this CPU at `-O3`, so clang vectorizes some of its loops too.
 ## Other CPU targets
 
 The tables above are for `-Dtarget=native`. The same pass built for other
-x86 vector sets, BC7 rows only, one run of `--rounds 3` each (throughput,
-zig-bcn / original; both sides built for the same target):
+x86-64 levels, BC7 rows only, one run of `--rounds 3` each, both sides built
+for the same CPU (time ratio, zig-bcn / bc7e's scalar build):
 
 | feature | `x86_64_v3` (AVX2) | baseline (SSE2) |
 | --- | ---: | ---: |
-| bc7 encode ultrafast | 1.88 | 1.31 |
-| bc7 encode veryfast | 1.75 | 1.23 |
-| bc7 encode fast | 1.74 | 1.24 |
-| bc7 encode basic | 1.85 | 1.24 |
-| bc7 encode basic linear | 1.52 | 3.36 |
-| bc7 encode slow | 1.87 | 1.15 |
-| bc7 encode veryslow | 2.26 | 1.07 |
-| bc7 encode slowest | 2.29 | 1.12 |
+| bc7 encode ultrafast | 0.53 | 0.58 |
+| bc7 encode veryfast | 0.57 | 0.63 |
+| bc7 encode fast | 0.57 | 0.63 |
+| bc7 encode basic | 0.54 | 0.61 |
+| bc7 encode basic linear | 0.66 | 0.19 |
+| bc7 encode slow | 0.53 | 0.62 |
+| bc7 encode veryslow | 0.44 | 0.57 |
+| bc7 encode slowest | 0.44 | 0.57 |
 
-The gain is smallest on SSE2, whose registers hold four floats, so each
-16-pixel vector takes four instructions per step; but zig-bcn is faster at every level there too. On this machine the AVX2
-build was faster than the native AVX-512 build. On SSE2, bc7e's `basic
-linear` ran at about a quarter of its AVX2 speed, which makes that row's
-ratio large; the cause was not investigated.
+Baseline is what a cross-compiled x86-64 build gets without `-Dcpu`. It
+has no vector floor instruction (that came with SSE4.1), so the lane
+floor goes through integers there, which is exact for the values it sees.
+zig-bcn has no run-time CPU dispatch: a baseline build runs the SSE2 code
+on any CPU. On this machine the AVX2 build is faster than the AVX-512 one,
+so `-Dcpu=x86_64_v3` is the build to use for tools on recent x86-64 CPUs.
+On SSE2, bc7e's `basic linear` runs at about a fifth of its AVX2 speed,
+which makes that row's ratio small; the cause was not investigated.
+
+## Build modes
+
+`zig build bench` runs ReleaseFast. The asset tools may be built in other
+modes, so BC7 encoding of the image set (all 7 levels, both metrics, RGBA
+and RGB sources, and 3,000 random blocks) was also timed in each mode,
+against v0.3.2 built the same way: time of this pass over v0.3.2's, median
+of 3 runs, range over the rows.
+
+| build | time, this pass / v0.3.2 |
+| --- | ---: |
+| ReleaseFast, native | 0.48 to 0.73 |
+| ReleaseFast, `x86_64_v3` | 0.41 to 0.65 |
+| ReleaseFast, baseline | 0.29 to 0.54 |
+| ReleaseSafe, native | 0.48 to 0.67 |
+| ReleaseSafe, baseline | 0.52 to 0.80 |
+| Debug, LLVM (`-fllvm`, or `.use_llvm = true`) | 0.34 to 0.54 |
+| Debug, Zig's x86-64 backend | 1.16 to 1.81 |
+
+Debug builds for x86_64-linux use Zig's own x86-64 backend by default,
+which compiles the lane code poorly: BC7 encoding there is **slower** than
+in v0.3.2. Debug on Windows uses LLVM. A Debug tool that encodes textures
+on Linux should be built with LLVM, or the tool with ReleaseSafe. The
+Debug rows leave out `veryslow` and `slowest`.
 
 ## Threads
 

@@ -119,7 +119,7 @@ listed in [`STATUS.md`](STATUS.md#left-out-approved). In short:
 
 ## Tests
 
-`zig build test` runs 64 tests: 18 unit tests and 46 tests that build the
+`zig build test` runs 68 tests: 18 unit tests and 50 tests that build the
 originals from `reference/`. Most of the 46 run the original and the port
 on the same inputs and compare every output byte, error measure and flag;
 `bc6h.Quality.high`, which has no original, is checked against what its
@@ -146,14 +146,20 @@ image set:
 The BC7 encoder is slower than bc7e's ISPC build, its fast build, at every
 level: by 6% to 61% with bc7e's own build flags, and by 67% to 139% against
 an AVX-512 build of it. It is faster than bc7e's scalar C++ build, the one
-it is translated from and tested against byte for byte, by 24% to 47%. Both
-are for code built for the CPU it runs on.
+it is translated from and tested against byte for byte, by 25% to 50%.
 
-An Intel Xeon (Granite Rapids) cloud VM with 4 virtual CPUs, one thread,
-Linux 6.18, Zig 0.17.0 ReleaseFast against Zig's clang `-O3`, and bc7e's
-ISPC build with ISPC 1.25.3 and its own flags, at commit
-`5862a52`; each row is from the run with the median time ratio of three.
-Earlier figures were from a Ryzen 9 9950X3D and are not comparable.
+These are ReleaseFast builds for the CPU they run on, on an Intel Xeon
+(Granite Rapids) cloud VM with 4 virtual CPUs, one thread, Linux 6.18, Zig
+0.17.0, against Zig's clang `-O3` and, for bc7e's ISPC build, ISPC 1.25.3
+with bc7e's own flags; each row is from the run with the median time ratio
+of three, at commit `d64ab48` (the ISPC row at `031d30f`, with the same
+encoder code). Earlier figures were from a Ryzen 9 9950X3D and are not
+comparable.
+
+zig-bcn has no run-time CPU dispatch: it runs the code of the CPU it was
+built for. For tools, `-Dcpu=x86_64_v3` (AVX2) was the fastest build here.
+Debug builds for x86_64-linux use Zig's own backend, in which BC7 encoding
+is slower than in v0.3.2; build Debug tools with LLVM.
 
 - [`doc/BENCHMARKS.md`](doc/BENCHMARKS.md): every row, the flags on both
   sides, the run counts and the command.
