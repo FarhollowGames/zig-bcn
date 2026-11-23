@@ -50,10 +50,10 @@ const alternate = mask: {
 /// texcomp computes it in `f32`, which gives the same bytes: the one half,
 /// at s = 0, is exact in `f32`, and every other value lies at least 1 / 254
 /// from a half.
-fn unormFromSnorm(s: @Vector(32, i8)) @Vector(32, u8) {
-    const Wide = @Vector(32, u16);
-    const signed: @Vector(32, i16) = @intCast(s);
-    const from_zero: Wide = @intCast(signed + @as(@Vector(32, i16), @splat(127)));
+fn unormFromSnorm(s: @Vector(16, i8)) @Vector(16, u8) {
+    const Wide = @Vector(16, u16);
+    const signed: @Vector(16, i16) = @intCast(s);
+    const from_zero: Wide = @intCast(signed + @as(@Vector(16, i16), @splat(127)));
     const sum = from_zero * @as(Wide, @splat(255)) + @as(Wide, @splat(127));
     return @intCast(sum / @as(Wide, @splat(254)));
 }
@@ -86,9 +86,34 @@ pub fn decodeImageRows(src: []const u8, dst: image.ImageMut(u8), rows: image.Blo
     assert(dst.channels >= 2);
     image.decodeBlocks(block_bytes, dst.width, dst.height, src, rows, dst, struct {
         fn f(out: image.ImageMut(u8), block: *const [block_bytes]u8, bx: u32, by: u32) void {
-            out.putBlock(2, bx, by, &decodeBlock(block));
+            putRedGreen(out, bx, by, bc4.decodeBlock(block[0..8]), bc4.decodeBlock(block[8..16]));
         }
     }.f);
+}
+
+/// Writes a block's red and green lanes into channels 0 and 1 of `out`,
+/// writing no other byte. A block wholly inside an image of 2 or 4 channels
+/// is written from the lanes, a row or a pixel's two bytes at a time; any
+/// other goes through `putBlock`.
+fn putRedGreen(out: image.ImageMut(u8), bx: u32, by: u32, r: @Vector(16, u8), g: @Vector(16, u8)) void {
+    const inside = out.width - bx * 4 >= 4 and out.height - by * 4 >= 4;
+    if (inside and (out.channels == 2 or out.channels == 4)) {
+        // Each pixel's red and green as one 16-bit lane, in pixel order.
+        const pairs: @Vector(16, u16) = @bitCast(@as(@Vector(32, u8), @shuffle(u8, r, g, alternate)));
+        inline for (0..4) |yy| {
+            const at = @as(usize, by * 4 + yy) * out.stride + @as(usize, bx) * 4 * out.channels;
+            if (out.channels == 2) {
+                out.pixels[at..][0..8].* = @bitCast(@as(@Vector(4, u16), @shuffle(u16, pairs, undefined, [4]i32{ yy * 4, yy * 4 + 1, yy * 4 + 2, yy * 4 + 3 })));
+            } else {
+                // Only red and green are written: another thread may own
+                // blue and alpha.
+                inline for (0..4) |x| out.pixels[at + 4 * x ..][0..2].* = @bitCast(pairs[yy * 4 + x]);
+            }
+        }
+        return;
+    }
+    const pairs: [32]u8 = @shuffle(u8, r, g, alternate);
+    out.putBlock(2, bx, by, @ptrCast(&pairs));
 }
 
 /// Decodes signed blocks (BC5_SNORM) into channels 0 and 1 of `dst`, as
@@ -109,10 +134,9 @@ pub fn decodeImageSnormRows(
     assert(dst.channels >= 2);
     image.decodeBlocks(block_bytes, dst.width, dst.height, src, rows, dst, struct {
         fn f(out: image.ImageMut(u8), block: *const [block_bytes]u8, bx: u32, by: u32) void {
-            const signed: [32]i8 = @bitCast(decodeBlockSnorm(block));
-            const unorm: [32]u8 = unormFromSnorm(signed);
-            const bytes: [16][2]u8 = @bitCast(unorm);
-            out.putBlock(2, bx, by, &bytes);
+            const r = unormFromSnorm(bc4.decodeBlockSnorm(block[0..8]));
+            const g = unormFromSnorm(bc4.decodeBlockSnorm(block[8..16]));
+            putRedGreen(out, bx, by, r, g);
         }
     }.f);
 }

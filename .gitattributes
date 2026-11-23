@@ -1,0 +1,4 @@
+# LF everywhere, so a Windows checkout has the same bytes (zig fmt checks
+# them); the fuzz corpus is binary.
+* text=auto eol=lf
+*.bin binary

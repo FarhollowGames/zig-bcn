@@ -139,7 +139,7 @@ test "bc5 snorm decodes texcomp's snorm encoding of the image set like texcomp" 
     try m.finish();
 }
 
-test "bc5 snorm image decode matches texcomp in windows of a larger image, 2 to 4 channels" {
+test "bc5 image decode matches texcomp in windows of a larger image, 2 to 4 channels, signed and unsigned" {
     // width, height, then the window's corner in the image
     const windows = [_][4]u32{
         .{ 1, 1, 0, 0 },                        .{ 3, 5, 7, 2 },    .{ 5, 2, 50, 40 },
@@ -152,7 +152,7 @@ test "bc5 snorm image decode matches texcomp in windows of a larger image, 2 to 
     var packed_rgba: [images.pixel_count][4]u8 = undefined;
     var want: [images.pixel_count * 4]u8 = undefined;
     var got: [want.len]u8 = undefined;
-    for (windows) |window| for (2..5) |channels| {
+    for ([_]c_int{ 0, signed }) |snorm| for (windows) |window| for (2..5) |channels| {
         const w = window[0];
         const h = window[1];
         const stride = images.width * @as(u32, @intCast(channels));
@@ -165,18 +165,19 @@ test "bc5 snorm image decode matches texcomp in windows of a larger image, 2 to 
             b.* = a.*;
         }
         const packed_bytes = std.mem.sliceAsBytes(packed_rgba[0 .. w * h]);
-        const rc = tc_bc5_decompress_rgba8(&data, w, h, signed, w * 4, packed_bytes.ptr, w * h * 4);
+        const rc = tc_bc5_decompress_rgba8(&data, w, h, snorm, w * 4, packed_bytes.ptr, w * h * 4);
         try std.testing.expectEqual(@as(c_int, 0), rc);
         for (0..h) |y| for (0..w) |x| {
             want[at + y * stride + x * channels ..][0..2].* = packed_rgba[y * w + x][0..2].*;
         };
-        bcn.bc5.decodeImageSnorm(&data, .{
+        const out: bcn.ImageMut(u8) = .{
             .pixels = got[at..],
             .width = w,
             .height = h,
             .stride = stride,
             .channels = @intCast(channels),
-        });
+        };
+        if (snorm != 0) bcn.bc5.decodeImageSnorm(&data, out) else bcn.bc5.decodeImage(&data, out);
         try std.testing.expectEqualSlices(u8, &want, &got);
     };
 }

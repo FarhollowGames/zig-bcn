@@ -36,6 +36,39 @@ const vk_format = encoding.vulkanFormat(true).?; // VK_FORMAT_BC7_SRGB_BLOCK
 `encodeImageRows` and each format's `encodeImageRows` and `decodeImageRows`
 take a `bcn.BlockRows` band, for callers with their own job system.
 
+The image decoders write only the channels they decode (BC4 channel 0,
+BC5 channels 0 and 1, BC6H channels 0 to 2) of the pixels they cover, and
+no other byte of the image, so other threads may write the other channels
+of the same image meanwhile.
+
+One encode call needs at most about 11 KB of stack for BC7 in ReleaseFast
+and ReleaseSafe, 28 KB in Debug with LLVM, and 44 KB in Debug with Zig's
+x86-64 backend (the default for Debug on x86_64-linux); job systems with
+small fiber stacks should allow for the Debug figures.
+
+## Same bytes on every machine
+
+Every encoder and decoder gives the same bytes for the same input on every
+CPU, OS and optimize mode: none uses fused multiply-adds, fast math,
+approximate instructions or CPU dispatch, and the vector code does each
+lane's float steps exactly as the scalar code would. `test/golden_test.zig`
+checks recorded SHA-256 digests of every format's output on fixed inputs
+(the bytes of v0.3.2), and CI runs it on x86-64 Linux, x86-64 Windows and
+baseline x86-64. The digests were also checked for `x86_64_v3`, AVX-512,
+and ReleaseSafe, ReleaseFast and Debug builds; aarch64 builds compile but
+have not been run.
+
+## Choosing a build for tools
+
+zig-bcn runs the code of the CPU it was built for, with no run-time
+dispatch. On x86-64, `-Dcpu=x86_64_v3` (AVX2) was the fastest build on the
+test machine, faster than AVX-512; a baseline build, which a cross-compile
+gets without `-Dcpu`, runs everywhere at somewhat lower speed.
+ReleaseSafe is close to ReleaseFast. A Debug build for x86_64-linux uses
+Zig's own x86-64 backend unless it asks for LLVM (`.use_llvm = true`), and
+encodes BC7 about three times as slowly as with LLVM. See
+[`BENCHMARKS.md`](BENCHMARKS.md).
+
 ## Format specifics
 
 - **BC1 and BC3** take `Settings{ .quality, .rounding }`. `rounding = .biased`
